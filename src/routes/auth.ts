@@ -11,6 +11,11 @@ import { signinGuard, signupGuard } from "../middleware/security.ts";
 
 export const authRouter = Router();
 
+const clearSessionCookies = (res: import("express").Response) => {
+  res.clearCookie("unabridged_session", { path: "/" });
+  res.clearCookie("n4n1_session", { path: "/" });
+};
+
 authRouter.post("/signup", signupGuard, (req, res) => {
   const parsed = z
     .object({ username: z.string().trim().min(3).max(32).regex(/^[a-zA-Z0-9_]+$/), password: z.string().min(10).max(128) })
@@ -25,7 +30,7 @@ authRouter.post("/signup", signupGuard, (req, res) => {
   const id = randomUUID();
   try {
     insertUser(id, parsed.data.username, passwordHash(parsed.data.password), Date.now(), ip);
-    return signIn(res, id, parsed.data.username);
+    return signIn(res, id, parsed.data.username, req);
   } catch {
     return res.status(409).json({ error: "That username is already taken." });
   }
@@ -36,13 +41,12 @@ authRouter.post("/signin", signinGuard, (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: "Invalid credentials" });
   const row = findUserByUsername(parsed.data.username);
   if (!row || !passwordOk(parsed.data.password, row.password_hash)) return res.status(401).json({ error: "Invalid credentials" });
-  return signIn(res, row.id, row.username);
+  return signIn(res, row.id, row.username, req);
 });
 
 authRouter.post("/signout", (req, res) => {
   const sid = req.cookies.unabridged_session ?? req.cookies.n4n1_session;
   if (sid) deleteSession(hash(sid));
-  res.clearCookie("unabridged_session");
-  res.clearCookie("n4n1_session");
+  clearSessionCookies(res);
   res.json({ ok: true });
 });

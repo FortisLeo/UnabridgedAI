@@ -58,11 +58,15 @@ export function ChatView({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ chatId: chatId || undefined, content, webSearch, darkWebSearch }),
       });
-      if (response.status === 402) {
-        const payload = await response.json().catch(() => ({}));
-        throw new ApiError(payload.error ?? "Free limit reached. Upgrade to Pro to keep chatting.", 402, payload);
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({} as Record<string, unknown>));
+        throw new ApiError(
+          typeof payload.error === "string" ? payload.error : `Request failed (${response.status})`,
+          response.status,
+          payload,
+        );
       }
-      if (!response.ok || !response.body) throw new Error("The channel dropped before a reply came back.");
+      if (!response.body) throw new Error("The channel dropped before a reply came back.");
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();

@@ -51,7 +51,9 @@ chatRouter.post("/", chatGuard, async (req, res) => {
   const history = chatId ? listHistory(chatId) : [];
   const sources = await collectSources(parsed.data.content, Boolean(parsed.data.webSearch), Boolean(parsed.data.darkWebSearch));
   const abort = new AbortController();
-  req.on("close", () => abort.abort());
+  res.on("close", () => {
+    if (!res.writableEnded) abort.abort();
+  });
 
   res.status(200);
   res.setHeader("Content-Type", "text/event-stream");
