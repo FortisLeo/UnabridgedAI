@@ -1,4 +1,4 @@
-export type View = "chat" | "settings" | "billing";
+export type View = "chat" | "settings" | "billing" | "api" | "docs";
 
 export type User = {
   id: string;
@@ -46,6 +46,14 @@ export type Settings = {
   theme: "dark" | "light";
 };
 
+export type ApiKey = {
+  id: string;
+  name: string;
+  prefix: string;
+  created_at: number;
+  revoked_at: number | null;
+};
+
 export const defaultSettings: Settings = {
   memoryEnabled: true,
   memory: "",
@@ -54,6 +62,6 @@ export const defaultSettings: Settings = {
   darkWebSearch: false,
   temporaryChat: false,
   saveHistory: true,
-  model: "grok-4.5",
+  model: "unabridged",
   theme: "dark",
 };

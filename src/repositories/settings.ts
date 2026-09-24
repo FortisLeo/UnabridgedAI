@@ -1,4 +1,5 @@
 import { db } from "../db/client.ts";
+import { PUBLIC_MODEL, UPSTREAM_MODEL } from "../lib/models.ts";
 import type { PublicSettings, SettingsRow } from "../types.ts";
 
 const defaultSettings = (userId: string): SettingsRow => ({
@@ -10,7 +11,7 @@ const defaultSettings = (userId: string): SettingsRow => ({
   dark_web_search: 0,
   temporary_chat: 0,
   save_history: 1,
-  model: "grok-4.5",
+  model: UPSTREAM_MODEL,
   theme: "dark",
 });
 
@@ -22,7 +23,7 @@ export const publicSettings = (row: SettingsRow): PublicSettings => ({
   darkWebSearch: Boolean(row.dark_web_search),
   temporaryChat: Boolean(row.temporary_chat),
   saveHistory: Boolean(row.save_history),
-  model: row.model,
+  model: PUBLIC_MODEL,
   theme: row.theme,
 });
 

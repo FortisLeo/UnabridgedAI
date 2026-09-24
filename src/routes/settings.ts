@@ -19,7 +19,6 @@ settingsRouter.put("/", (req, res) => {
       darkWebSearch: z.boolean().optional(),
       temporaryChat: z.boolean().optional(),
       saveHistory: z.boolean().optional(),
-      model: z.string().min(1).max(80).optional(),
       theme: z.enum(["dark", "light"]).optional(),
     })
     .safeParse(req.body);
@@ -34,7 +33,7 @@ settingsRouter.put("/", (req, res) => {
     dark_web_search: Number(parsed.data.darkWebSearch ?? current.dark_web_search),
     temporary_chat: Number(parsed.data.temporaryChat ?? current.temporary_chat),
     save_history: Number(parsed.data.saveHistory ?? current.save_history),
-    model: parsed.data.model ?? current.model,
+    model: current.model,
     theme: parsed.data.theme ?? current.theme,
   });
   res.json({ settings: publicSettings(getSettings(userId)) });

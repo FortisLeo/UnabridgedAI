@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { ApiPage } from "../features/api/ApiPage.tsx";
+import { DocsPage } from "../features/api/DocsPage.tsx";
 import { AuthScreen } from "../features/auth/AuthScreen.tsx";
 import { BillingPage } from "../features/billing/BillingPage.tsx";
 import { ChatView } from "../features/chat/ChatView.tsx";
@@ -17,7 +19,6 @@ export function App() {
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [issuedApiKey, setIssuedApiKey] = useState<string | null>(null);
   const [quota, setQuota] = useState<Quota | null>(null);
 
   const loadChats = async () => {
@@ -52,10 +53,12 @@ export function App() {
     chat: activeChatId ? chats.find((chat) => chat.id === activeChatId)?.title ?? "Open channel" : "New session",
     settings: "Control plane",
     billing: "Access plan",
+    api: "Get API",
+    docs: "API docs",
   };
 
   if (loading) return <div className="boot"><span className="sigil">UnabridgedAI</span><span>initializing private channel</span></div>;
-  if (!user) return <AuthScreen mode={authMode} setMode={setAuthMode} onAuth={(next, apiKey, nextQuota) => { setUser(next); setIssuedApiKey(apiKey ?? null); if (nextQuota) setQuota(nextQuota); }} error={error} setError={setError} />;
+  if (!user) return <AuthScreen mode={authMode} setMode={setAuthMode} onAuth={(next, nextQuota) => { setUser(next); if (nextQuota) setQuota(nextQuota); }} error={error} setError={setError} />;
 
   return (
     <div className={`app theme-${settings.theme}`}>
@@ -89,6 +92,8 @@ export function App() {
               </svg>
             </button>
           )}
+          {view === "api" && <button className="header-link" onClick={() => setView("docs")}>docs ↗</button>}
+          {view === "docs" && <button className="header-link" onClick={() => setView("api")}>keys ↗</button>}
         </header>
         {view === "chat" ? (
           <ChatView
@@ -109,14 +114,19 @@ export function App() {
           <SettingsPage
             settings={settings}
             setSettings={setSettings}
-            issuedApiKey={issuedApiKey}
             onHistoryCleared={async () => {
               setChats([]);
               setActiveChatId(null);
               setMessages([]);
             }}
           />
-        ) : <BillingPage onQuota={setQuota} />}
+        ) : view === "api" ? (
+          <ApiPage />
+        ) : view === "docs" ? (
+          <DocsPage />
+        ) : (
+          <BillingPage onQuota={setQuota} />
+        )}
       </main>
     </div>
   );

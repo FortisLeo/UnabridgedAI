@@ -1,7 +1,7 @@
 import cookieParser from "cookie-parser";
 import express from "express";
 import helmet from "helmet";
-import { auth } from "./middleware/auth.ts";
+import { apiKeyAuth, auth } from "./middleware/auth.ts";
 import { blockBlacklistedIp } from "./middleware/security.ts";
 import { authRouter } from "./routes/auth.ts";
 import { billingRouter } from "./routes/billing.ts";
@@ -10,7 +10,16 @@ import { chatsRouter } from "./routes/chats.ts";
 import { dataRouter } from "./routes/data.ts";
 import { keysRouter } from "./routes/keys.ts";
 import { meRouter } from "./routes/me.ts";
+import { openaiRouter } from "./routes/openai.ts";
 import { settingsRouter } from "./routes/settings.ts";
+
+const corsV1 = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type, x-api-key");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  if (req.method === "OPTIONS") return res.status(204).end();
+  next();
+};
 
 export const createApp = () => {
   const app = express();
@@ -33,6 +42,8 @@ export const createApp = () => {
   app.use("/api/data", auth, dataRouter);
   app.use("/api/billing", billingRouter);
   app.use("/api/keys", auth, keysRouter);
+  app.use("/v1", corsV1, blockBlacklistedIp, apiKeyAuth, openaiRouter);
+  app.use("/api/v1", corsV1, blockBlacklistedIp, apiKeyAuth, openaiRouter);
   app.use("/api", (_req, res) => res.status(404).json({ error: "Not found" }));
   return app;
 };

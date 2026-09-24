@@ -19,7 +19,8 @@ CREATE TABLE IF NOT EXISTS api_keys (
   key_hash TEXT UNIQUE NOT NULL,
   prefix TEXT NOT NULL,
   created_at INTEGER NOT NULL,
-  revoked_at INTEGER
+  revoked_at INTEGER,
+  name TEXT NOT NULL DEFAULT 'default'
 );
 CREATE TABLE IF NOT EXISTS chats (
   id TEXT PRIMARY KEY,

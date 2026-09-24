@@ -3,7 +3,6 @@ import { z } from "zod";
 import { hash, passwordHash, passwordOk, randomUUID } from "../lib/crypto.ts";
 import { clientIp, isPrivateIp } from "../lib/ip.ts";
 import { SIGNUPS_PER_IP_WEEK, WEEK_MS } from "../lib/quota.ts";
-import { issueApiKey } from "../repositories/api-keys.ts";
 import { blacklistIp, isIpBlacklisted } from "../repositories/ip.ts";
 import { deleteSession } from "../repositories/sessions.ts";
 import { countSignupsFromIp, findUserByUsername, insertUser } from "../repositories/users.ts";
@@ -26,7 +25,7 @@ authRouter.post("/signup", signupGuard, (req, res) => {
   const id = randomUUID();
   try {
     insertUser(id, parsed.data.username, passwordHash(parsed.data.password), Date.now(), ip);
-    return signIn(res, id, parsed.data.username, issueApiKey(id));
+    return signIn(res, id, parsed.data.username);
   } catch {
     return res.status(409).json({ error: "That username is already taken." });
   }

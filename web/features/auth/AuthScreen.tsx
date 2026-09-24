@@ -11,7 +11,7 @@ export function AuthScreen({
 }: {
   mode: "signin" | "signup";
   setMode: (mode: "signin" | "signup") => void;
-  onAuth: (user: User, apiKey?: string | null, quota?: Quota) => void;
+  onAuth: (user: User, quota?: Quota) => void;
   error: string;
   setError: (value: string) => void;
 }) {
@@ -24,8 +24,8 @@ export function AuthScreen({
     setBusy(true);
     setError("");
     try {
-      const data = await api<{ user: User; apiKey?: string | null; quota?: Quota }>(`/api/auth/${mode}`, { method: "POST", body: JSON.stringify({ username, password }) });
-      onAuth(data.user, data.apiKey, data.quota);
+      const data = await api<{ user: User; quota?: Quota }>(`/api/auth/${mode}`, { method: "POST", body: JSON.stringify({ username, password }) });
+      onAuth(data.user, data.quota);
     } catch (err) {
       setError((err as Error).message);
     } finally {

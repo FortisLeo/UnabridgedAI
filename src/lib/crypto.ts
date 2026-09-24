@@ -16,5 +16,5 @@ export const passwordOk = (password: string, stored: string) => {
 };
 
 export const randomToken = () => randomBytes(32).toString("base64url");
-export const makeApiKey = () => `UnabridgedAI_${randomToken()}`;
+export const makeApiKey = () => `uai_${randomToken()}`;
 export { randomUUID };

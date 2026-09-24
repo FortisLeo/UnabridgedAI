@@ -42,3 +42,26 @@ docker compose up --build
 ```
 
 Data lives in the `unabridged-data` volume. The app listens on port 3001.
+
+
+## OpenAI-compatible API
+
+Create named keys in the app under **Get API**. Then point any OpenAI client at this origin:
+
+```
+base URL:  http://localhost:3001/v1
+API key:   uai_...
+```
+
+Open WebUI: Admin → Connections → OpenAI → API URL `http://HOST:3001/v1`, paste a key.
+
+```python
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:3001/v1", api_key="uai_...")
+print(client.chat.completions.create(
+    model="unabridged",
+    messages=[{"role": "user", "content": "Hello."}],
+).choices[0].message.content)
+```
+
+The UnabridgedAI system prompt is always prepended. Extra `system` messages from the client are additional instructions. Streaming and tool calls pass through.

@@ -103,7 +103,7 @@ export function ChatView({
             if (data.quota) onQuota(data.quota);
             if (data.chat) await onChatSaved(data.chat);
           }
-          if (event === "error") throw new Error(data.error ?? "The model is unavailable right now.");
+          if (event === "error") throw new Error(data.error ?? "UnabridgedAI is unavailable right now.");
         }
       }
     } catch (error) {

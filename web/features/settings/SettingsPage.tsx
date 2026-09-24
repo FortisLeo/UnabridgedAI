@@ -2,17 +2,14 @@ import { useEffect, useState } from "react";
 import { Toggle } from "../../components/Toggle.tsx";
 import { api } from "../../lib/api.ts";
 import { defaultSettings, type Settings } from "../../types.ts";
-import { ApiKeysCard } from "./ApiKeysCard.tsx";
 
 export function SettingsPage({
   settings,
   setSettings,
-  issuedApiKey,
   onHistoryCleared,
 }: {
   settings: Settings;
   setSettings: React.Dispatch<React.SetStateAction<Settings>>;
-  issuedApiKey?: string | null;
   onHistoryCleared: () => Promise<void>;
 }) {
   const [draft, setDraft] = useState(settings);
@@ -50,7 +47,7 @@ export function SettingsPage({
   return (
     <section className="settings">
       <div className="settings-intro">
-        <p>Memory, history, search defaults, and data controls for this workspace.</p>
+        <p>Memory, history, search defaults, and data controls for this workspace. API keys live under Get API.</p>
         {status && <div className="status-pill">{status}</div>}
       </div>
       <div className="settings-grid">
@@ -67,7 +64,6 @@ export function SettingsPage({
           <Toggle label="Web search by default" hint="Attach public search results to new messages." on={draft.webSearch} onChange={(value) => { setDraft({ ...draft, webSearch: value }); save({ webSearch: value }); }} />
           <Toggle label="Dark web search by default" hint="Include publicly indexed onion results." on={draft.darkWebSearch} onChange={(value) => { setDraft({ ...draft, darkWebSearch: value }); save({ darkWebSearch: value }); }} />
         </article>
-        <ApiKeysCard initialKey={issuedApiKey} />
         <article>
           <div className="eyebrow">data controls</div>
           <p>Export or wipe stored sessions. Memory and instructions stay until you clear them.</p>
