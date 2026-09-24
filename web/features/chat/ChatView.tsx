@@ -149,20 +149,22 @@ export function ChatView({
         ) : messages.map((message, index) => (
           <div className={`message ${message.role}${busy && index === messages.length - 1 && message.role === "assistant" ? " streaming" : ""}`} key={message.id ?? index}>
             <div className="message-label">{message.role === "user" ? "you" : "UnabridgedAI"}</div>
-            {message.role === "assistant" ? (
-              message.content ? <Markdown text={message.content} /> : <div className="typing"><i /><i /><i /></div>
-            ) : <div className="user-text">{message.content}</div>}
             {message.sources && message.sources.length > 0 && (
               <div className="sources">
                 {message.sources.map((source) => (
-                  <a key={source.url} href={source.url} target="_blank" rel="noreferrer">
-                    <em>{source.kind}</em>
-                    <strong>{source.title}</strong>
-                    <span>{source.snippet}</span>
+                  <a key={source.url} className={source.kind} href={source.url} target="_blank" rel="noreferrer" title={source.title}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <circle cx="11" cy="11" r="7" />
+                      <path d="M20 20l-3.5-3.5" />
+                    </svg>
+                    <strong>{source.title || source.url}</strong>
                   </a>
                 ))}
               </div>
             )}
+            {message.role === "assistant" ? (
+              message.content ? <Markdown text={message.content} /> : <div className="typing"><i /><i /><i /></div>
+            ) : <div className="user-text">{message.content}</div>}
           </div>
         ))}
         {quota?.plan === "free" && quota.remaining === 0 && <Paywall remaining={quota.remaining} onUpgrade={onUpgrade} />}

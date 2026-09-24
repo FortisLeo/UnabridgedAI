@@ -1,7 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
 :root{font-family:Manrope,system-ui,sans-serif;color:#e9e7e2;background:#111210;font-synthesis:none}*{box-sizing:border-box}body{margin:0;min-width:320px;background:#111210}button,input,textarea,select{font:inherit}button{cursor:pointer;color:inherit}a{color:inherit}
-.app{min-height:100vh;display:grid;grid-template-columns:255px 1fr;background:#111210}
-aside{border-right:1px solid #2a2c27;padding:27px 20px 23px;display:flex;flex-direction:column;min-height:100vh;min-width:0}
+.app{height:100vh;overflow:hidden;display:grid;grid-template-columns:255px 1fr;background:#111210}
+aside{border-right:1px solid #2a2c27;padding:27px 20px 23px;display:flex;flex-direction:column;height:100vh;min-height:0;min-width:0;overflow:hidden;position:sticky;top:0}
 .brand{display:flex;align-items:center;gap:10px;font-size:20px;letter-spacing:-.04em;font-weight:800}
 .brand-mark{display:grid;place-items:center;background:#e5e2d8;color:#161712;width:27px;height:27px;font-size:13px;letter-spacing:-.1em}
 .status,.eyebrow,.composer-meta,.message-label,.auth-kicker,.auth-foot,.side-note,.live,.tag,.ledger-line,.security-item,.chat-list-label,.empty-chats,.toggles,.sources,.toggle small,.status-pill,.feature-list span,.temp-flag{font-family:'DM Mono',monospace}
@@ -16,20 +16,25 @@ nav button.active span{color:#c9df70}
 .side-note{margin-top:auto;color:#53574d;font-size:10px;line-height:1.7;padding:15px 10px}
 .signout{border-top:1px solid #2a2c27;margin-top:15px;padding:18px 10px 0;color:#777a70}
 .signout span{float:right}
-main{min-width:0}
-header{height:112px;border-bottom:1px solid #2a2c27;display:flex;align-items:center;justify-content:space-between;padding:0 clamp(25px,6vw,85px)}
+main{min-width:0;min-height:0;height:100vh;overflow:hidden;display:flex;flex-direction:column}
+header{height:112px;flex:0 0 112px;border-bottom:1px solid #2a2c27;display:flex;align-items:center;justify-content:space-between;padding:0 clamp(25px,6vw,85px)}
+main > :not(header){flex:1;min-height:0;overflow:auto}
 header h1{font-size:24px;font-weight:600;letter-spacing:-.05em;margin:8px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:min(70vw,640px)}
 .eyebrow{color:#797d71;font-size:10px;text-transform:uppercase;letter-spacing:.1em}
 .live{font-size:10px;color:#888c80}
 .live span{color:#c9df70;margin-left:8px}
-.chat{height:calc(100vh - 112px);display:flex;flex-direction:column;max-width:900px;margin:auto}
+.chat{flex:1;min-height:0;display:flex;flex-direction:column;width:100%}
 .temp-icon{width:36px;height:36px;border:1px solid #3a3d34;background:#191b17;color:#8c9084;display:grid;place-items:center;padding:0}
 .temp-icon svg{width:18px;height:18px}
 .temp-icon:hover,.temp-icon.on{border-color:#8a6b2d;color:#e5bf66}
 .temp-icon.on{background:#1c1a14}
 .header-link{border:1px solid #3a3d34;background:#191b17;color:#c9df70;font:11px 'DM Mono';padding:9px 12px}
 .header-link:hover{border-color:#687348}
-.conversation{flex:1;overflow:auto;padding:50px 35px 30px}
+.conversation{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:50px 35px 30px;scrollbar-width:thin;scrollbar-color:#3a3d34 #111210}
+.conversation::-webkit-scrollbar{width:10px}
+.conversation::-webkit-scrollbar-track{background:#111210}
+.conversation::-webkit-scrollbar-thumb{background:#3a3d34;border:2px solid #111210}
+.conversation::-webkit-scrollbar-thumb:hover{background:#c9df70}
 .empty{text-align:center;margin-top:10vh}
 .empty-number{font-family:'DM Mono';font-size:13px;color:#c9df70;border:1px solid #57613a;width:38px;height:38px;display:grid;place-items:center;margin:0 auto 25px}
 .empty h2{font-size:38px;letter-spacing:-.07em;margin:0 0 12px}
@@ -67,7 +72,7 @@ header h1{font-size:24px;font-weight:600;letter-spacing:-.05em;margin:8px 0 0;ov
 .typing i:nth-child(2){animation-delay:.15s}
 .typing i:nth-child(3){animation-delay:.3s}
 @keyframes pulse{50%{opacity:.2}}
-.composer{position:relative;margin:0 35px 32px;border:1px solid #3a3d34;background:#191b17;padding:15px 58px 15px}
+.composer{position:relative;margin:0 auto 32px;width:calc(100% - 70px);max-width:900px;border:1px solid #3a3d34;background:#191b17;padding:15px 58px 15px}
 .composer:focus-within{border-color:#687348}
 .composer textarea{display:block;width:100%;resize:none;background:none;border:0;outline:0;color:#e9e7e2;font-size:14px;line-height:1.5}
 .composer textarea::placeholder{color:#63675d}
@@ -162,11 +167,12 @@ header h1{font-size:24px;font-weight:600;letter-spacing:-.05em;margin:8px 0 0;ov
 .toggles button.on{border-color:#7a9240;color:#c9df70;background:#1c2214}
 .toggles button.on.dark{border-color:#8a6b2d;color:#e5bf66}
 .temp-flag{font-size:9px;color:#e5bf66}
-.sources{display:grid;gap:8px;margin-top:16px}
-.sources a{border:1px solid #32362d;background:#161814;padding:10px 12px;text-decoration:none;display:grid;gap:4px}
-.sources em{font-style:normal;color:#c9df70;font-size:9px;text-transform:uppercase}
-.sources strong{font-size:12px}
-.sources span{font-size:11px;color:#8b8f83;line-height:1.5}
+.sources{display:grid;gap:4px;margin:0 0 12px}
+.sources a{display:flex;align-items:center;gap:8px;min-height:28px;padding:5px 10px;text-decoration:none;background:#161814;border:0;border-left:2px solid #c9df70;overflow:hidden}
+.sources a svg{width:12px;height:12px;flex:0 0 auto}
+.sources a.web{border-left-color:#c9df70;color:#c9df70}
+.sources a.darkweb{border-left-color:#e27b6b;color:#e27b6b;background:#1c1414}
+.sources strong{font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:inherit}
 .settings{max-width:900px;margin:0 auto;padding:36px 35px 80px}
 .settings-intro{display:flex;justify-content:space-between;gap:20px;align-items:start;margin-bottom:24px}
 .settings-intro p{max-width:640px;color:#8c9084;line-height:1.7;font-size:14px}
@@ -190,14 +196,21 @@ header h1{font-size:24px;font-weight:600;letter-spacing:-.05em;margin:8px 0 0;ov
 .feature-list p{margin:0 0 12px;color:#8c9084;font-size:13px;line-height:1.5}
 .feature-list span{font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#6a6e64}
 .feature-list .live span{color:#c9df70}
+.theme-light .conversation{scrollbar-color:#cfc8b6 #f4f1ea}
+.theme-light .conversation::-webkit-scrollbar-track{background:#f4f1ea}
+.theme-light .conversation::-webkit-scrollbar-thumb{background:#cfc8b6;border-color:#f4f1ea}
+.theme-light .conversation::-webkit-scrollbar-thumb:hover{background:#8a6b2d}
+.theme-light .sources a{background:#fffdf8}
+.theme-light .sources a.darkweb{background:#f7ece8}
 .theme-light{background:#f4f1ea;color:#1b1d17}
 .theme-light aside,.theme-light header,.theme-light .composer,.theme-light .plan-card,.theme-light .key-card,.theme-light .ledger,.theme-light .settings article{background:#fffdf8;border-color:#ddd7c8;color:#1b1d17}
 .theme-light nav button,.theme-light .chat-list button,.theme-light .signout,.theme-light .new-session{color:#5d6156}
 .theme-light .muted,.theme-light .side-note,.theme-light .composer-meta,.theme-light .empty p{color:#6d7166}
 
 @media(max-width:760px){
-  .app{display:block}
-  aside{min-height:auto;height:auto;padding:18px 20px;display:block;border-right:0;border-bottom:1px solid #2a2c27}
+  .app{display:block;height:auto;overflow:visible}
+  aside{height:auto;min-height:0;padding:18px 20px;display:block;border-right:0;border-bottom:1px solid #2a2c27;position:static;overflow:visible}
+  main{height:auto;overflow:visible}
   .status,.side-note,.signout,.chat-list-label{display:none}
   nav{display:flex;margin-top:20px;overflow:auto}
   nav button{white-space:nowrap}
@@ -211,7 +224,7 @@ header h1{font-size:24px;font-weight:600;letter-spacing:-.05em;margin:8px 0 0;ov
   .page-grid,.settings-grid,.feature-list{grid-template-columns:1fr}
   .page-grid,.settings,.api-page,.docs{margin:35px auto;padding:0 18px 50px}
   .conversation{padding:30px 18px}
-  .composer{margin:0 18px 18px}
+  .composer{margin:0 auto 18px;width:calc(100% - 36px)}
   .empty h2{font-size:32px}
   .suggestions{display:grid}
   .suggestions button{text-align:left}
