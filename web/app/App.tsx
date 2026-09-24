@@ -58,7 +58,7 @@ export function App() {
   };
 
   if (loading) return <div className="boot"><span className="sigil">UnabridgedAI</span><span>initializing private channel</span></div>;
-  if (!user) return <AuthScreen mode={authMode} setMode={setAuthMode} onAuth={(next, nextQuota) => { setUser(next); if (nextQuota) setQuota(nextQuota); }} error={error} setError={setError} />;
+  if (!user) return <AuthScreen mode={authMode} setMode={setAuthMode} onAuth={(next, nextQuota, nextSettings) => { setUser(next); if (nextQuota) setQuota(nextQuota); if (nextSettings) setSettings({ ...defaultSettings, ...nextSettings }); }} error={error} setError={setError} />;
 
   return (
     <div className={`app theme-${settings.theme}`}>

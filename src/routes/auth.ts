@@ -6,14 +6,15 @@ import { SIGNUPS_PER_IP_WEEK, WEEK_MS } from "../lib/quota.ts";
 import { blacklistIp, isIpBlacklisted } from "../repositories/ip.ts";
 import { deleteSession } from "../repositories/sessions.ts";
 import { countSignupsFromIp, findUserByUsername, insertUser } from "../repositories/users.ts";
-import { signIn } from "../services/auth.ts";
+import { sessionCookie, signIn } from "../services/auth.ts";
 import { signinGuard, signupGuard } from "../middleware/security.ts";
 
 export const authRouter = Router();
 
-const clearSessionCookies = (res: import("express").Response) => {
-  res.clearCookie("unabridged_session", { path: "/" });
-  res.clearCookie("n4n1_session", { path: "/" });
+const clearSessionCookies = (req: import("express").Request, res: import("express").Response) => {
+  const options = { ...sessionCookie(req), maxAge: 0 };
+  res.clearCookie("unabridged_session", options);
+  res.clearCookie("n4n1_session", options);
 };
 
 authRouter.post("/signup", signupGuard, (req, res) => {
@@ -22,10 +23,12 @@ authRouter.post("/signup", signupGuard, (req, res) => {
     .safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Use a username and a password of at least 10 characters." });
   const ip = clientIp(req);
-  if (isIpBlacklisted(ip)) return res.status(403).json({ error: "This network is blocked." });
-  if (countSignupsFromIp(ip, Date.now() - WEEK_MS) >= SIGNUPS_PER_IP_WEEK) {
-    if (!isPrivateIp(ip)) blacklistIp(ip, "signup farming");
-    return res.status(429).json({ error: "Too many accounts from this network this week." });
+  if (!isPrivateIp(ip)) {
+    if (isIpBlacklisted(ip)) return res.status(403).json({ error: "This network is blocked." });
+    if (countSignupsFromIp(ip, Date.now() - WEEK_MS) >= SIGNUPS_PER_IP_WEEK) {
+      blacklistIp(ip, "signup farming");
+      return res.status(429).json({ error: "Too many accounts from this network this week." });
+    }
   }
   const id = randomUUID();
   try {
@@ -47,6 +50,6 @@ authRouter.post("/signin", signinGuard, (req, res) => {
 authRouter.post("/signout", (req, res) => {
   const sid = req.cookies.unabridged_session ?? req.cookies.n4n1_session;
   if (sid) deleteSession(hash(sid));
-  clearSessionCookies(res);
+  clearSessionCookies(req, res);
   res.json({ ok: true });
 });

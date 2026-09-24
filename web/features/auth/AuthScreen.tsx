@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { api } from "../../lib/api.ts";
-import type { Quota, User } from "../../types.ts";
+import type { Quota, Settings, User } from "../../types.ts";
 
 export function AuthScreen({
   mode,
@@ -11,7 +11,7 @@ export function AuthScreen({
 }: {
   mode: "signin" | "signup";
   setMode: (mode: "signin" | "signup") => void;
-  onAuth: (user: User, quota?: Quota) => void;
+  onAuth: (user: User, quota?: Quota, settings?: Settings) => void;
   error: string;
   setError: (value: string) => void;
 }) {
@@ -25,7 +25,12 @@ export function AuthScreen({
     setError("");
     try {
       const data = await api<{ user: User; quota?: Quota }>(`/api/auth/${mode}`, { method: "POST", body: JSON.stringify({ username, password }) });
-      onAuth(data.user, data.quota);
+      try {
+        const session = await api<{ user: User; quota?: Quota; settings?: Settings }>("/api/me");
+        onAuth(session.user, session.quota ?? data.quota, session.settings);
+      } catch {
+        setError("Signed in, but the browser did not keep the session cookie. Use the same host as the API, allow cookies, and prefer HTTPS.");
+      }
     } catch (err) {
       setError((err as Error).message);
     } finally {

@@ -23,7 +23,7 @@ const corsV1 = (req: express.Request, res: express.Response, next: express.NextF
 
 export const createApp = () => {
   const app = express();
-  app.set("trust proxy", 1);
+  app.set("trust proxy", true);
   app.use(helmet({ contentSecurityPolicy: false, hsts: false, crossOriginResourcePolicy: false, crossOriginOpenerPolicy: false }));
   app.use(express.json({ limit: "2mb" }));
   app.use(cookieParser());
