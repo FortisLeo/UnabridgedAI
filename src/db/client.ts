@@ -13,6 +13,12 @@ if (!userColumns.some((column) => column.name === "signup_ip")) db.exec("ALTER T
 const keyColumns = db.prepare("PRAGMA table_info(api_keys)").all() as Array<{ name: string }>;
 if (!keyColumns.some((column) => column.name === "name")) db.exec("ALTER TABLE api_keys ADD COLUMN name TEXT NOT NULL DEFAULT 'default'");
 db.exec("DROP TABLE IF EXISTS payments");
+db.prepare(
+  "DELETE FROM ip_events WHERE ip IN ('127.0.0.1', '::1', 'localhost', 'unknown') OR ip LIKE '127.%' OR ip LIKE '192.168.%' OR ip LIKE '10.%'",
+).run();
+db.prepare(
+  "DELETE FROM ip_blacklist WHERE ip IN ('127.0.0.1', '::1', 'localhost', 'unknown') OR ip LIKE '127.%' OR ip LIKE '192.168.%' OR ip LIKE '10.%'",
+).run();
 
 export const closeDb = () => {
   try {

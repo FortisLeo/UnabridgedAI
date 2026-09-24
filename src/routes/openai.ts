@@ -82,20 +82,13 @@ openaiRouter.post("/chat/completions", chatGuard, async (req, res) => {
 
   const settings = getSettings(userId);
   const { messages, ...rest } = parsed.data;
-  const abort = new AbortController();
-  res.on("close", () => {
-    if (!res.writableEnded) abort.abort();
-  });
 
   let upstream: Response;
   try {
-    upstream = await completeChat(
-      {
-        ...rest,
-        messages: withSystemPrompt(messages as ChatMessage[], settings),
-      },
-      abort.signal,
-    );
+    upstream = await completeChat({
+      ...rest,
+      messages: withSystemPrompt(messages as ChatMessage[], settings),
+    });
   } catch (error) {
     const status = typeof error === "object" && error && "status" in error ? Number((error as { status: number }).status) : 502;
     return res.status(status).json(openaiError(error instanceof Error ? error.message : publicError(status), "api_error"));
@@ -113,6 +106,7 @@ openaiRouter.post("/chat/completions", chatGuard, async (req, res) => {
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache, no-transform");
     res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders?.();
     await pipeCompletionStream(upstream, res);
     return;

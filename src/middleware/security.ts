@@ -8,10 +8,11 @@ pruneIpEvents(Date.now() - WEEK_MS);
 const limit = (action: string, windowMs: number, max: number, message: string) =>
   (req: Request, res: Response, next: NextFunction) => {
     const ip = clientIp(req);
+    if (isPrivateIp(ip)) return next();
     if (isIpBlacklisted(ip)) return res.status(403).json({ error: "This network is blocked." });
     const count = countIpEvents(ip, action, Date.now() - windowMs);
     if (count >= max) {
-      if (action === "signup" && !isPrivateIp(ip) && countIpEvents(ip, "signup", Date.now() - WEEK_MS) >= AUTO_BLACKLIST_SIGNUPS) {
+      if (action === "signup" && countIpEvents(ip, "signup", Date.now() - WEEK_MS) >= AUTO_BLACKLIST_SIGNUPS) {
         blacklistIp(ip, "too many signups");
         return res.status(403).json({ error: "This network is blocked." });
       }
@@ -24,6 +25,7 @@ const limit = (action: string, windowMs: number, max: number, message: string) =
 
 export const blockBlacklistedIp = (req: Request, res: Response, next: NextFunction) => {
   const ip = clientIp(req);
+  if (isPrivateIp(ip)) return next();
   if (isIpBlacklisted(ip)) return res.status(403).json({ error: "This network is blocked." });
   next();
 };

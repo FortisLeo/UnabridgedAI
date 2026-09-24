@@ -50,25 +50,22 @@ chatRouter.post("/", chatGuard, async (req, res) => {
 
   const history = chatId ? listHistory(chatId) : [];
   const sources = await collectSources(parsed.data.content, Boolean(parsed.data.webSearch), Boolean(parsed.data.darkWebSearch));
-  const abort = new AbortController();
-  res.on("close", () => {
-    if (!res.writableEnded) abort.abort();
-  });
 
   res.status(200);
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders?.();
 
   const send = (event: string, data: unknown) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    if (!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
 
   try {
     if (sources.length) send("sources", { sources });
     let reply = "";
-    for await (const chunk of streamChat(settings, history, parsed.data.content, sources, abort.signal)) {
+    for await (const chunk of streamChat(settings, history, parsed.data.content, sources)) {
       reply += chunk;
       send("delta", { text: chunk });
     }

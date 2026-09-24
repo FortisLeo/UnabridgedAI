@@ -6,11 +6,18 @@ import { buildSystemPrompt } from "./prompt.ts";
 
 const UPSTREAM = "https://api.0-0.pro/v1";
 
-const deltaText = (payload: unknown) => {
-  const choice = (payload as { choices?: Array<{ delta?: { content?: unknown } }> }).choices?.[0]?.delta?.content;
-  if (typeof choice === "string") return choice;
-  if (Array.isArray(choice)) return choice.map((part) => (typeof part === "string" ? part : (part as { text?: string })?.text ?? "")).join("");
+const asText = (value: unknown): string => {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(asText).join("");
+  if (value && typeof value === "object" && "text" in value && typeof (value as { text: unknown }).text === "string") {
+    return (value as { text: string }).text;
+  }
   return "";
+};
+
+const deltaText = (payload: unknown) => {
+  const choice = (payload as { choices?: Array<{ delta?: { content?: unknown; text?: unknown }; message?: { content?: unknown } }> }).choices?.[0];
+  return asText(choice?.delta?.content) || asText(choice?.delta?.text) || asText(choice?.message?.content);
 };
 
 const pickKey = () => {
@@ -31,23 +38,38 @@ export const providerFetch = async (path: string, init: RequestInit = {}) => {
   });
 };
 
+const thinkingOff = {
+  reasoning_effort: "none",
+  reasoning: { effort: "none" },
+  enable_thinking: false,
+};
+
+const thinkingLow = {
+  reasoning_effort: "low",
+  reasoning: { effort: "low" },
+  enable_thinking: false,
+};
+
 export const completeChat = async (body: Record<string, unknown>, signal?: AbortSignal) => {
-  const payload: Record<string, unknown> = {
-    reasoning_effort: "none",
-    reasoning: { effort: "none" },
-    enable_thinking: false,
+  const base: Record<string, unknown> = {
+    ...thinkingOff,
     ...body,
     model: toUpstreamModel(),
   };
   const abort = signal ?? AbortSignal.timeout(120000);
-  let response = await providerFetch("/chat/completions", { method: "POST", signal: abort, body: JSON.stringify(payload) });
-  if (!response.ok) {
-    response = await providerFetch("/chat/completions", {
-      method: "POST",
-      signal: abort,
-      body: JSON.stringify({ ...payload, reasoning_effort: "low", reasoning: { effort: "low" } }),
-    });
+  const attempts = [base, { ...base, ...thinkingLow }, { ...body, model: toUpstreamModel() }];
+  let response: Response | undefined;
+  for (const payload of attempts) {
+    if (abort.aborted) break;
+    try {
+      response = await providerFetch("/chat/completions", { method: "POST", signal: abort, body: JSON.stringify(payload) });
+      if (response.ok) return response;
+    } catch (error) {
+      if (abort.aborted) throw error;
+      response = undefined;
+    }
   }
+  if (!response) throw Object.assign(new Error(publicError(502)), { status: 502 });
   return response;
 };
 
@@ -81,26 +103,8 @@ export const pipeCompletionStream = async (upstream: Response, res: { write: (ch
   res.end();
 };
 
-export async function* streamChat(
-  settings: SettingsRow,
-  history: Array<{ role: "user" | "assistant"; content: string }>,
-  content: string,
-  sources: SearchHit[],
-  signal?: AbortSignal,
-) {
-  const response = await completeChat(
-    {
-      stream: true,
-      messages: [
-        { role: "system", content: buildSystemPrompt(settings, sources) },
-        ...history,
-        { role: "user", content },
-      ],
-    },
-    signal,
-  );
-  if (!response.ok || !response.body) throw Object.assign(new Error(publicError(response.status)), { status: 502 });
-
+async function* readContentStream(response: Response) {
+  if (!response.body) return;
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -123,4 +127,34 @@ export async function* streamChat(
       }
     }
   }
+}
+
+export async function* streamChat(
+  settings: SettingsRow,
+  history: Array<{ role: "user" | "assistant"; content: string }>,
+  content: string,
+  sources: SearchHit[],
+  signal?: AbortSignal,
+) {
+  const messages = [
+    { role: "system", content: buildSystemPrompt(settings, sources) },
+    ...history,
+    { role: "user", content },
+  ];
+  let response = await completeChat({ stream: true, messages }, signal);
+  if (!response.ok || !response.body) {
+    response = await completeChat({ stream: true, messages }, signal);
+  }
+  if (!response.ok || !response.body) throw Object.assign(new Error(publicError(response.status)), { status: 502 });
+
+  let yielded = false;
+  for await (const piece of readContentStream(response)) {
+    yielded = true;
+    yield piece;
+  }
+  if (yielded || signal?.aborted) return;
+
+  const retry = await completeChat({ stream: true, messages }, signal);
+  if (!retry.ok || !retry.body) return;
+  for await (const piece of readContentStream(retry)) yield piece;
 }
