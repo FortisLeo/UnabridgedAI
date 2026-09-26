@@ -205,10 +205,16 @@ const watchMonero = async () => {
 const watchMoneroInvoice = async (invoice: InvoiceRow, height: number) => {
   const transfers = await incomingTransfers(invoice.derivation_index);
   const seen = new Set<string>();
+  const observed = new Set<string>();
   const now = Date.now();
   let complete = true;
   for (const transfer of transfers) {
     if (transfer.minor !== invoice.derivation_index || transfer.major !== 0 || transfer.amount <= 0n) continue;
+    const outputIndex = transfer.globalIndex ?? 0;
+    const pubkey = transfer.globalIndex == null ? transfer.pubkey : null;
+    const identity = `${transfer.txHash}:${outputIndex}:${pubkey ?? ""}`;
+    seen.add(identity);
+    observed.add(`${identity}:${transfer.amount.toString()}`);
     let unlock: number | null = null;
     try {
       unlock = await unlockTimeOf(transfer.txHash);
@@ -218,9 +224,6 @@ const watchMoneroInvoice = async (invoice: InvoiceRow, height: number) => {
     }
     const isLocked = transfer.frozen || locked(unlock, height, now);
     const confirmations = transfer.blockHeight > 0 ? Math.max(0, height - transfer.blockHeight) : 0;
-    const outputIndex = transfer.globalIndex ?? 0;
-    const pubkey = transfer.globalIndex == null ? transfer.pubkey : null;
-    seen.add(`${transfer.txHash}:${outputIndex}:${pubkey ?? ""}`);
     upsertCredit({
       invoice_id: invoice.id,
       chain: "monero",
@@ -240,8 +243,16 @@ const watchMoneroInvoice = async (invoice: InvoiceRow, height: number) => {
   }
   if (complete) markMissing(invoice.id, "monero", seen, now);
   const again = await incomingTransfers(invoice.derivation_index);
-  const againKeys = new Set(again.map((transfer) => `${transfer.txHash}:${transfer.globalIndex ?? 0}:${transfer.globalIndex == null ? transfer.pubkey : ""}`));
-  const agrees = complete && [...seen].every((key) => againKeys.has(key));
+  const againObserved = new Set(
+    again
+      .filter((transfer) => transfer.minor === invoice.derivation_index && transfer.major === 0 && transfer.amount > 0n)
+      .map((transfer) => {
+        const outputIndex = transfer.globalIndex ?? 0;
+        const pubkey = transfer.globalIndex == null ? transfer.pubkey : null;
+        return `${transfer.txHash}:${outputIndex}:${pubkey ?? ""}:${transfer.amount.toString()}`;
+      }),
+  );
+  const agrees = complete && observed.size === againObserved.size && [...observed].every((key) => againObserved.has(key));
   grantInFlight = true;
   try {
     applySettlement(invoice, creditsFor(invoice.id), Date.now(), agrees);
