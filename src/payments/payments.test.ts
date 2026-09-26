@@ -71,6 +71,7 @@ const credit = {
 assert.equal(classify(invoice, [{ ...credit, first_seen_at: 2_000 }], 2_000, true), "exact_pending");
 assert.equal(classify(invoice, [credit], 2_000, true), "succeeded");
 assert.equal(classify(invoice, [credit], 2_000, false), "exact_pending");
+assert.equal(classify(invoice, [credit, { ...credit, id: "pending", tx_hash: "0x2", settled: 0, base_units: "1" }], 2_000, true), "overpaid");
 assert.equal(classify(invoice, [{ ...credit, base_units: "14999999" }], 2_000, true), "underpaid");
 assert.equal(classify(invoice, [{ ...credit, base_units: "15000001" }], 2_000, true), "overpaid");
 assert.equal(classify(invoice, [{ ...credit, wrong_asset: 1, base_units: "15000000", settled: 0 }], 2_000, true), "wrong_asset");

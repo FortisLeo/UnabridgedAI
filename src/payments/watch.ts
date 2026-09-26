@@ -124,10 +124,10 @@ const watchEvm = async (chain: "ethereum" | "polygon") => {
       .filter((credit) => credit.chain === chain && credit.settled === 1 && credit.wrong_asset === 0 && credit.disappeared_at == null)
       .reduce((sum, credit) => sum + BigInt(credit.base_units), 0n);
     if (onChain !== logged) continue;
-    if (chain === "ethereum" && invoice.asset === "usdt") await usdtFee(rpcs[0] as JsonRpc, invoice.token_contract as string);
+    const fee = chain === "ethereum" && invoice.asset === "usdt" ? await usdtFee(rpcs[0] as JsonRpc, invoice.token_contract as string) : undefined;
     grantInFlight = true;
     try {
-      applySettlement(invoice, creditsFor(invoice.id), Date.now(), true);
+      applySettlement(invoice, creditsFor(invoice.id), Date.now(), true, fee);
     } finally {
       grantInFlight = false;
     }

@@ -25,17 +25,29 @@ export const classify = (invoice: InvoiceRow, credits: CreditRow[], now: number,
   const expected = parseBaseUnits(invoice.expected_base_units);
   const seen = grant + unsettled;
   const confirmed = secondReadAgrees && settledCredits.length > 0 && settledCredits.every((credit) => credit.first_seen_at < now);
-  if (grant === expected && confirmed) return "succeeded";
-  if (grant > expected) return "overpaid";
-  if (seen > 0n && (seen === expected || (seen > expected && grant < expected))) return "exact_pending";
+  if (grant === expected && seen === expected && confirmed) return "succeeded";
+  if (seen > expected) return "overpaid";
+  if (seen === expected && seen > 0n) return "exact_pending";
   if (seen > 0n && seen < expected) return "underpaid";
   if (wrong && seen === 0n) return "wrong_asset";
   if (now > invoice.qr_expires_at) return "expired_unpaid";
   return "open";
 };
 
-export const applySettlement = (invoice: InvoiceRow, credits: CreditRow[], now: number, secondReadAgrees: boolean) => {
+export type UsdtFee = { basisPointsRate: bigint | null; maximumFee: bigint | null };
+
+export const shortPaymentReason = (invoice: InvoiceRow, credits: CreditRow[], fee?: UsdtFee) => {
+  if (invoice.chain !== "ethereum" || invoice.asset !== "usdt" || fee?.basisPointsRate == null || fee.maximumFee == null) return null;
+  const { received, remaining } = sums(invoice, credits);
+  const expected = parseBaseUnits(invoice.expected_base_units);
+  const proportionalFee = expected * fee.basisPointsRate / 10_000n;
+  const expectedFee = proportionalFee < fee.maximumFee ? proportionalFee : fee.maximumFee;
+  return received > 0n && remaining > 0n && remaining === expectedFee ? "usdt_fee_shortfall" : null;
+};
+
+export const applySettlement = (invoice: InvoiceRow, credits: CreditRow[], now: number, secondReadAgrees: boolean, fee?: UsdtFee) => {
   const status = classify(invoice, credits, now, secondReadAgrees);
+  const reason = status === "underpaid" ? shortPaymentReason(invoice, credits, fee) : null;
   const grant = db.transaction(() => {
     const current = db.prepare("SELECT plan FROM users WHERE id = ?").get(invoice.user_id) as { plan: string } | undefined;
     let alreadyPro = invoice.already_pro;
@@ -50,11 +62,14 @@ export const applySettlement = (invoice: InvoiceRow, credits: CreditRow[], now: 
     db.prepare(
       "UPDATE payment_invoices SET status = ?, updated_at = ?, settled_at = ?, grant_applied_at = ?, already_pro = ?, second_read_ok = ? WHERE id = ?",
     ).run(status, now, settledAt, grantAppliedAt, alreadyPro, secondReadAgrees ? 1 : invoice.second_read_ok, invoice.id);
+    if (reason || invoice.note === "usdt_fee_shortfall") {
+      db.prepare("UPDATE payment_invoices SET note = ? WHERE id = ?").run(reason, invoice.id);
+    }
     db.prepare("INSERT INTO payment_events (invoice_id, user_id, at, kind, detail) VALUES (?, ?, ?, 'status', ?)").run(
       invoice.id,
       invoice.user_id,
       now,
-      JSON.stringify({ status }),
+      JSON.stringify({ status, reason }),
     );
     return { status, alreadyPro, grantAppliedAt };
   })();
