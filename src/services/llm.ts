@@ -58,19 +58,20 @@ export const completeChat = async (body: Record<string, unknown>, signal?: Abort
   };
   const abort = signal ?? AbortSignal.timeout(120000);
   const attempts = [base, { ...base, ...thinkingLow }, { ...body, model: toUpstreamModel() }];
-  let response: Response | undefined;
+  let last: { status: number; body: string } | undefined;
   for (const payload of attempts) {
     if (abort.aborted) break;
     try {
-      response = await providerFetch("/chat/completions", { method: "POST", signal: abort, body: JSON.stringify(payload) });
-      if (response.ok) return response;
+      const next = await providerFetch("/chat/completions", { method: "POST", signal: abort, body: JSON.stringify(payload) });
+      if (next.ok) return next;
+      last = { status: next.status, body: await next.text() };
+      if (next.status === 401 || next.status === 403) break;
     } catch (error) {
       if (abort.aborted) throw error;
-      response = undefined;
     }
   }
-  if (!response) throw Object.assign(new Error(publicError(502)), { status: 502 });
-  return response;
+  if (!last) throw Object.assign(new Error(publicError(502)), { status: 502 });
+  return new Response(last.body, { status: last.status, headers: { "Content-Type": "application/json" } });
 };
 
 export const readErrorBody = async (response: Response) => {
@@ -82,25 +83,41 @@ export const readErrorBody = async (response: Response) => {
   }
 };
 
+/** True when the upstream stream delivered a finish reason or the OpenAI done sentinel. */
+export const streamFinished = (raw: string) => {
+  if (raw.includes("data: [DONE]")) return true;
+  return /"finish_reason"\s*:\s*"(?!null)[^"]+"/.test(raw);
+};
+
 export const pipeCompletionStream = async (upstream: Response, res: { write: (chunk: string) => unknown; end: () => void }) => {
-  if (!upstream.body) return res.end();
+  if (!upstream.body) {
+    res.end();
+    return "";
+  }
   const reader = upstream.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  let seen = "";
   try {
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      buffer += decoder.decode(value, { stream: true });
+      const text = decoder.decode(value, { stream: true });
+      seen += text;
+      buffer += text;
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
       if (lines.length) res.write(rewriteSse(lines.join("\n") + "\n"));
     }
-    if (buffer) res.write(rewriteSse(buffer));
+    if (buffer) {
+      seen += buffer;
+      res.write(rewriteSse(buffer));
+    }
   } catch {
     // client or upstream closed
   }
   res.end();
+  return seen;
 };
 
 async function* readContentStream(response: Response) {
@@ -143,9 +160,13 @@ export async function* streamChat(
   ];
   let response = await completeChat({ stream: true, messages }, signal);
   if (!response.ok || !response.body) {
+    await response.body?.cancel().catch(() => undefined);
     response = await completeChat({ stream: true, messages }, signal);
   }
-  if (!response.ok || !response.body) throw Object.assign(new Error(publicError(response.status)), { status: 502 });
+  if (!response.ok || !response.body) {
+    await response.body?.cancel().catch(() => undefined);
+    throw Object.assign(new Error(publicError(response.status)), { status: 502 });
+  }
 
   let yielded = false;
   for await (const piece of readContentStream(response)) {

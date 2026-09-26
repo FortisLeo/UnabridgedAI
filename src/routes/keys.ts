@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
-import { countActiveApiKeys, issueApiKey, listApiKeys, renameApiKey, revokeApiKey } from "../repositories/api-keys.ts";
+import { countActiveApiKeys, findApiKey, issueApiKey, listApiKeys, renameApiKey, revokeApiKey, rotateApiKey } from "../repositories/api-keys.ts";
 import { userIdOf } from "../types.ts";
 
 export const keysRouter = Router();
@@ -30,13 +30,13 @@ keysRouter.post("/", (req, res) => {
 });
 
 keysRouter.post("/rotate", (req, res) => {
-  const parsed = nameSchema.safeParse(req.body ?? {});
-  if (!parsed.success) return res.status(400).json({ error: "Name must be 1–64 characters." });
+  const parsed = z.object({ id: z.string().min(1), name: z.string().trim().min(1).max(64).optional() }).safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "Rotate needs the key id to revoke." });
   const userId = userIdOf(req);
-  if (countActiveApiKeys(userId) >= MAX_KEYS) return res.status(400).json({ error: "You already have 20 active keys. Revoke one first." });
-  const created = issueApiKey(userId, parsed.data.name ?? "default");
+  if (!findApiKey(userId, parsed.data.id)) return res.status(404).json({ error: "Key not found" });
+  const created = rotateApiKey(userId, parsed.data.id, parsed.data.name);
+  if (!created) return res.status(404).json({ error: "Key not found" });
   res.json({
-    apiKey: created.key,
     key: {
       id: created.id,
       name: created.name,

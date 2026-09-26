@@ -28,6 +28,18 @@ export const issueApiKey = (userId: string, name = "default") => {
   return { id, name: name.trim() || "default", prefix: key.slice(0, 16), created_at: createdAt, key };
 };
 
+/** Revoke the named key and issue its replacement in one write. The old secret stops working. */
+export const rotateApiKey = (userId: string, id: string, name?: string) => {
+  const current = findApiKey(userId, id);
+  if (!current || current.revoked_at) return undefined;
+  const rotate = db.transaction(() => {
+    const revoked = revokeApiKey(userId, id);
+    if (!revoked) return undefined;
+    return issueApiKey(userId, name ?? current.name);
+  });
+  return rotate();
+};
+
 export const listApiKeys = (userId: string) =>
   (db.prepare("SELECT id, user_id, prefix, name, created_at, revoked_at FROM api_keys WHERE user_id = ? ORDER BY created_at DESC").all(userId) as ApiKeyRow[]).map(publicRow);
 

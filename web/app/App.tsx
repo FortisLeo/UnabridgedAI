@@ -13,6 +13,7 @@ export function App() {
   const [user, setUser] = useState<User | null>(null);
   const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [chats, setChats] = useState<ChatSummary[]>([]);
+  const [chatsTruncated, setChatsTruncated] = useState(false);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [view, setView] = useState<View>("chat");
@@ -22,8 +23,9 @@ export function App() {
   const [quota, setQuota] = useState<Quota | null>(null);
 
   const loadChats = async () => {
-    const data = await api<{ chats: ChatSummary[] }>("/api/chats");
+    const data = await api<{ chats: ChatSummary[]; truncated?: boolean }>("/api/chats");
     setChats(data.chats);
+    setChatsTruncated(Boolean(data.truncated));
   };
 
   useEffect(() => {
@@ -64,6 +66,7 @@ export function App() {
     <div className={`app theme-${settings.theme}`}>
       <Sidebar
         chats={chats}
+        truncated={chatsTruncated}
         activeChatId={activeChatId}
         view={view}
         onNewSession={() => openChat(null)}

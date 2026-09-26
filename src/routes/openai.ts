@@ -4,8 +4,8 @@ import { openaiError, publicError } from "../lib/errors.ts";
 import { isPublicModel, listPublicModels, maskModelField } from "../lib/models.ts";
 import { chatGuard } from "../middleware/security.ts";
 import { getSettings } from "../repositories/settings.ts";
-import { getUserUsage, hasFreeQuota, incrementRequests } from "../repositories/usage.ts";
-import { completeChat, pipeCompletionStream, readErrorBody } from "../services/llm.ts";
+import { claimRequest, getUserUsage, releaseRequest } from "../repositories/usage.ts";
+import { completeChat, pipeCompletionStream, readErrorBody, streamFinished } from "../services/llm.ts";
 import { withSystemPrompt, type ChatMessage } from "../services/prompt.ts";
 import { userIdOf } from "../types.ts";
 
@@ -46,17 +46,7 @@ const completionSchema = z.object({
   stream_options: z.unknown().optional(),
 }).passthrough();
 
-const quotaGate = (userId: string) => {
-  const user = getUserUsage(userId);
-  if (!user) return { status: 401 as const, body: openaiError("Invalid API key.", "invalid_request_error", "invalid_api_key") };
-  if (!hasFreeQuota(user)) {
-    return {
-      status: 429 as const,
-      body: openaiError("Free limit reached. Upgrade to Pro to keep chatting.", "insufficient_quota", "insufficient_quota"),
-    };
-  }
-  return { user };
-};
+const paywall = () => openaiError("Free limit reached. Upgrade to Pro to keep chatting.", "insufficient_quota", "insufficient_quota");
 
 openaiRouter.get("/models", (_req, res) => {
   res.json({ object: "list", data: listPublicModels() });
@@ -77,8 +67,9 @@ openaiRouter.post("/chat/completions", chatGuard, async (req, res) => {
   }
 
   const userId = userIdOf(req);
-  const gate = quotaGate(userId);
-  if (!("user" in gate)) return res.status(gate.status).json(gate.body);
+  const user = getUserUsage(userId);
+  if (!user) return res.status(401).json(openaiError("Invalid API key.", "invalid_request_error", "invalid_api_key"));
+  if (!claimRequest(userId)) return res.status(429).json(paywall());
 
   const settings = getSettings(userId);
   const { messages, ...rest } = parsed.data;
@@ -90,16 +81,16 @@ openaiRouter.post("/chat/completions", chatGuard, async (req, res) => {
       messages: withSystemPrompt(messages as ChatMessage[], settings),
     });
   } catch (error) {
+    releaseRequest(userId);
     const status = typeof error === "object" && error && "status" in error ? Number((error as { status: number }).status) : 502;
     return res.status(status).json(openaiError(error instanceof Error ? error.message : publicError(status), "api_error"));
   }
 
   if (!upstream.ok) {
+    releaseRequest(userId);
     const body = await readErrorBody(upstream);
     return res.status(upstream.status === 401 ? 502 : upstream.status).json(body);
   }
-
-  incrementRequests(userId);
 
   if (parsed.data.stream) {
     res.status(200);
@@ -108,9 +99,15 @@ openaiRouter.post("/chat/completions", chatGuard, async (req, res) => {
     res.setHeader("Connection", "keep-alive");
     res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders?.();
-    await pipeCompletionStream(upstream, res);
+    const finished = await pipeCompletionStream(upstream, res);
+    if (!finished || !streamFinished(finished)) releaseRequest(userId);
     return;
   }
 
-  res.status(200).json(maskModelField(await readErrorBody(upstream)));
+  const body = maskModelField(await readErrorBody(upstream)) as { choices?: unknown; error?: unknown };
+  if (!Array.isArray(body.choices) || body.error) {
+    releaseRequest(userId);
+    return res.status(502).json(body.error ? body : openaiError(publicError(502), "api_error"));
+  }
+  res.status(200).json(body);
 });

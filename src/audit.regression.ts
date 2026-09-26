@@ -1,0 +1,384 @@
+/**
+ * Regression coverage for the evidenced audit bugs, excluding the paywall copy.
+ * Runs against an in-process Express app and a stubbed provider. No network.
+ */
+import assert from "node:assert/strict";
+import { mkdtempSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { Express } from "express";
+
+process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "uai-audit-")), "audit.db");
+process.env.ZERO_ZERO_API_KEY = "test-not-real";
+process.env.NODE_ENV = "production";
+delete process.env.TRUST_PROXY;
+delete process.env.COOKIE_SECURE;
+
+type FetchInit = RequestInit & { headers?: Record<string, string> };
+
+const { db } = await import("./db/client.ts");
+const { createApp, errorHandler } = await import("./app.ts");
+await import("./services/llm.ts");
+
+type Upstream = { status: number; body: string; contentType?: string };
+let upstreamQueue: Upstream[] = [];
+const originalFetch = globalThis.fetch;
+
+const sseChunk = (text: string, finish: string | null = null) =>
+  `data: ${JSON.stringify({ choices: [{ delta: { content: text }, finish_reason: finish }] })}\n\n`;
+
+const jsonCompletion = (text: string) =>
+  JSON.stringify({ id: "cmpl", object: "chat.completion", choices: [{ message: { role: "assistant", content: text }, finish_reason: "stop" }] });
+
+globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+  const url = String(input);
+  if (url.startsWith("https://api.0-0.pro/")) {
+    const next = upstreamQueue.shift();
+    if (!next) return new Response("missing stub", { status: 599 });
+    return new Response(next.body, {
+      status: next.status,
+      headers: { "Content-Type": next.contentType ?? "application/json" },
+    });
+  }
+  return originalFetch(input, init);
+}) as typeof fetch;
+
+const app = createApp();
+app.use(errorHandler);
+const server: Server = createServer(app as Express);
+await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+const port = (server.address() as AddressInfo).port;
+const base = `http://127.0.0.1:${port}`;
+
+const readSse = async (response: Response) => {
+  const text = await response.text();
+  const events = text.split("\n\n").flatMap((frame) => {
+    const event = frame.match(/^event: (.+)$/m)?.[1];
+    const dataLine = frame.match(/^data: (.+)$/m)?.[1];
+    if (!event || !dataLine) return [];
+    return [{ event, data: JSON.parse(dataLine) as Record<string, unknown> }];
+  });
+  return { text, events };
+};
+
+const cookieOf = (response: Response) => {
+  const raw = response.headers.getSetCookie?.() ?? [];
+  const line = raw.find((item) => item.startsWith("unabridged_session="));
+  if (!line) return "";
+  return line.split(";")[0];
+};
+
+let seq = 0;
+const signup = async (username = `user${++seq}`, password = "password12345", headers: Record<string, string> = {}) => {
+  const response = await fetch(`${base}/api/auth/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify({ username, password }),
+  });
+  const body = await response.json().catch(() => ({}));
+  return { response, body, cookie: cookieOf(response), username, password };
+};
+
+const authed = (cookie: string, path: string, init: FetchInit = {}) =>
+  fetch(`${base}${path}`, {
+    ...init,
+    headers: { ...(init.body ? { "Content-Type": "application/json" } : {}), ...init.headers, Cookie: cookie },
+  });
+
+const checks: Array<[string, () => Promise<void>]> = [];
+const test = (name: string, fn: () => Promise<void>) => checks.push([name, fn]);
+
+test("failed chat does not leave an empty session or burn quota", async () => {
+  upstreamQueue = [{ status: 401, body: JSON.stringify({ error: { message: "invalid api key" } }) }];
+  const user = await signup();
+  assert.equal(user.response.status, 200);
+  const chat = await authed(user.cookie, "/api/chat", { method: "POST", body: JSON.stringify({ content: "hello audit" }) });
+  assert.equal(chat.status, 502);
+  assert.equal(chat.headers.get("content-type")?.includes("text/event-stream"), false);
+  const body = await chat.json();
+  assert.match(body.error, /not authorized|unavailable/i);
+  const chats = await authed(user.cookie, "/api/chats");
+  const listed = await chats.json();
+  assert.equal(listed.chats.length, 0);
+  const row = db.prepare("SELECT requests_used FROM users WHERE username = ?").get(user.username) as { requests_used: number };
+  assert.equal(row.requests_used, 0);
+  const ghosts = db.prepare("SELECT COUNT(*) AS count FROM chats").get() as { count: number };
+  assert.equal(ghosts.count, 0);
+});
+
+test("a successful chat is stored once and counts as one request", async () => {
+  upstreamQueue = [{ status: 200, body: `${sseChunk("Hello")}${sseChunk("", "stop")}data: [DONE]\n\n`, contentType: "text/event-stream" }];
+  const user = await signup();
+  const chat = await authed(user.cookie, "/api/chat", { method: "POST", body: JSON.stringify({ content: "say hello" }) });
+  assert.equal(chat.status, 200);
+  assert.match(chat.headers.get("content-type") ?? "", /text\/event-stream/);
+  const sse = await readSse(chat);
+  const done = sse.events.find((event) => event.event === "done");
+  assert.equal(done?.data.reply, "Hello");
+  const body = { chat: done?.data.chat as { id: string } };
+  assert.ok(body.chat?.id);
+  const messages = db.prepare("SELECT role FROM messages WHERE chat_id = ? ORDER BY created_at").all(body.chat.id) as Array<{ role: string }>;
+  assert.deepEqual(messages.map((row) => row.role), ["user", "assistant"]);
+  const used = db.prepare("SELECT requests_used FROM users WHERE id = ?").get(body.chat ? (db.prepare("SELECT user_id FROM chats WHERE id = ?").get(body.chat.id) as { user_id: string }).user_id : "") as { requests_used: number };
+  assert.equal(used.requests_used, 1);
+});
+
+test("concurrent sends cannot all pass the last free request", async () => {
+  const user = await signup();
+  const id = (db.prepare("SELECT id FROM users WHERE username = ?").get(user.username) as { id: string }).id;
+  db.prepare("UPDATE users SET requests_used = 9 WHERE id = ?").run(id);
+  upstreamQueue = [
+    { status: 200, body: `${sseChunk("one")}${sseChunk("", "stop")}data: [DONE]\n\n`, contentType: "text/event-stream" },
+    { status: 200, body: `${sseChunk("two")}${sseChunk("", "stop")}data: [DONE]\n\n`, contentType: "text/event-stream" },
+  ];
+  const [a, b] = await Promise.all([
+    authed(user.cookie, "/api/chat", { method: "POST", body: JSON.stringify({ content: "first" }) }),
+    authed(user.cookie, "/api/chat", { method: "POST", body: JSON.stringify({ content: "second" }) }),
+  ]);
+  const statuses = [a.status, b.status].sort();
+  assert.deepEqual(statuses, [200, 402]);
+  const used = db.prepare("SELECT requests_used FROM users WHERE id = ?").get(id) as { requests_used: number };
+  assert.equal(used.requests_used, 10);
+});
+
+test("OpenAI route does not charge a non-ok provider response", async () => {
+  upstreamQueue = [
+    { status: 401, body: JSON.stringify({ error: { message: "invalid api key" } }) },
+    { status: 401, body: JSON.stringify({ error: { message: "invalid api key" } }) },
+    { status: 401, body: JSON.stringify({ error: { message: "invalid api key" } }) },
+  ];
+  const user = await signup();
+  const created = await authed(user.cookie, "/api/keys", { method: "POST", body: JSON.stringify({ name: "probe" }) });
+  const key = await created.json();
+  const completion = await fetch(`${base}/v1/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key.secret}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "unabridged", messages: [{ role: "user", content: "hi" }] }),
+  });
+  assert.equal(completion.status, 502);
+  const id = (db.prepare("SELECT id FROM users WHERE username = ?").get(user.username) as { id: string }).id;
+  const used = db.prepare("SELECT requests_used FROM users WHERE id = ?").get(id) as { requests_used: number };
+  assert.equal(used.requests_used, 0);
+});
+
+test("OpenAI route releases the claim when a 200 body is not a completion", async () => {
+  upstreamQueue = [{ status: 200, body: JSON.stringify({ error: { message: "overloaded" } }) }];
+  const user = await signup();
+  const created = await authed(user.cookie, "/api/keys", { method: "POST", body: JSON.stringify({ name: "probe" }) });
+  const key = await created.json();
+  const completion = await fetch(`${base}/v1/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key.secret}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "unabridged", messages: [{ role: "user", content: "hi" }] }),
+  });
+  assert.equal(completion.status, 502);
+  const id = (db.prepare("SELECT id FROM users WHERE username = ?").get(user.username) as { id: string }).id;
+  const used = db.prepare("SELECT requests_used FROM users WHERE id = ?").get(id) as { requests_used: number };
+  assert.equal(used.requests_used, 0);
+});
+
+test("OpenAI stream charges a finished stream and releases an unfinished one", async () => {
+  const finished = `${sseChunk("hi")}${sseChunk("", "stop")}data: [DONE]\n\n`;
+  const broken = sseChunk("partial");
+  upstreamQueue = [
+    { status: 200, body: finished, contentType: "text/event-stream" },
+    { status: 200, body: broken, contentType: "text/event-stream" },
+  ];
+  const user = await signup();
+  const created = await authed(user.cookie, "/api/keys", { method: "POST", body: JSON.stringify({ name: "stream" }) });
+  const key = await created.json();
+  const id = (db.prepare("SELECT id FROM users WHERE username = ?").get(user.username) as { id: string }).id;
+  const ok = await fetch(`${base}/v1/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key.secret}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "unabridged", stream: true, messages: [{ role: "user", content: "hi" }] }),
+  });
+  assert.equal(ok.status, 200);
+  await ok.text();
+  const afterOk = db.prepare("SELECT requests_used FROM users WHERE id = ?").get(id) as { requests_used: number };
+  assert.equal(afterOk.requests_used, 1);
+  const bad = await fetch(`${base}/v1/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key.secret}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "unabridged", stream: true, messages: [{ role: "user", content: "hi" }] }),
+  });
+  assert.equal(bad.status, 200);
+  await bad.text();
+  const afterBad = db.prepare("SELECT requests_used FROM users WHERE id = ?").get(id) as { requests_used: number };
+  assert.equal(afterBad.requests_used, 1);
+});
+
+test("OpenAI route charges a finished completion once", async () => {
+  upstreamQueue = [{ status: 200, body: jsonCompletion("ok") }];
+  const user = await signup();
+  const created = await authed(user.cookie, "/api/keys", { method: "POST", body: JSON.stringify({ name: "probe" }) });
+  const key = await created.json();
+  const completion = await fetch(`${base}/v1/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key.secret}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "unabridged", messages: [{ role: "user", content: "hi" }] }),
+  });
+  assert.equal(completion.status, 200);
+  const id = (db.prepare("SELECT id FROM users WHERE username = ?").get(user.username) as { id: string }).id;
+  const used = db.prepare("SELECT requests_used FROM users WHERE id = ?").get(id) as { requests_used: number };
+  assert.equal(used.requests_used, 1);
+});
+
+test("X-Forwarded-For does not choose the signup address or skip a real blacklist", async () => {
+  const user = await signup("spoofeduser", "password12345", { "X-Forwarded-For": "203.0.113.9", "X-Forwarded-Proto": "https" });
+  assert.equal(user.response.status, 200);
+  const stored = db.prepare("SELECT signup_ip FROM users WHERE username = ?").get("spoofeduser") as { signup_ip: string };
+  assert.notEqual(stored.signup_ip, "203.0.113.9");
+  assert.match(stored.signup_ip, /^(127\.|::1)/);
+  const setCookie = user.response.headers.get("set-cookie") ?? "";
+  assert.equal(/;\s*Secure/i.test(setCookie), false, "spoofed proto must not force Secure");
+  db.prepare("INSERT INTO ip_blacklist VALUES ('203.0.113.9', 'planted', ?)").run(Date.now());
+  const again = await signup("spoofeduser2", "password12345", { "X-Forwarded-For": "203.0.113.9" });
+  assert.equal(again.response.status, 200);
+});
+
+test("a blacklisted socket address is blocked", async () => {
+  db.prepare("INSERT OR REPLACE INTO ip_blacklist VALUES ('127.0.0.1', 'test', ?)").run(Date.now());
+  const blocked = await signup("blockednet");
+  assert.equal(blocked.response.status, 403);
+  db.prepare("DELETE FROM ip_blacklist WHERE ip = '127.0.0.1'").run();
+});
+
+test("case-variant usernames are one account and sign-in trims", async () => {
+  const first = await signup("CaseUser");
+  assert.equal(first.response.status, 200);
+  const second = await signup("caseuser");
+  assert.equal(second.response.status, 409);
+  const signin = await fetch(`${base}/api/auth/signin`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: "  CASEUSER  ", password: "password12345" }),
+  });
+  assert.equal(signin.status, 200);
+  const body = await signin.json();
+  assert.equal(body.user.username, "CaseUser");
+});
+
+test("renaming a chat does not un-archive it", async () => {
+  const user = await signup();
+  const id = crypto.randomUUID();
+  const now = Date.now();
+  const owner = (db.prepare("SELECT id FROM users WHERE username = ?").get(user.username) as { id: string }).id;
+  db.prepare("INSERT INTO chats VALUES (?, ?, 'old', 1, ?, ?)").run(id, owner, now, now);
+  const patched = await authed(user.cookie, `/api/chats/${id}`, { method: "PATCH", body: JSON.stringify({ title: "still archived?" }) });
+  assert.equal(patched.status, 200);
+  const row = db.prepare("SELECT archived, title FROM chats WHERE id = ?").get(id) as { archived: number; title: string };
+  assert.equal(row.archived, 1);
+  assert.equal(row.title, "still archived?");
+  const list = await (await authed(user.cookie, "/api/chats")).json();
+  assert.equal(list.chats.some((chat: { id: string }) => chat.id === id), false);
+});
+
+test("sign-out ends every session for the account and drops expired rows", async () => {
+  const user = await signup();
+  const again = await fetch(`${base}/api/auth/signin`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: user.username, password: user.password }),
+  });
+  assert.equal(again.status, 200);
+  const second = cookieOf(again);
+  const owner = (db.prepare("SELECT id FROM users WHERE username = ?").get(user.username) as { id: string }).id;
+  db.prepare("INSERT INTO sessions VALUES ('expired-hash', ?, ?)").run(owner, Date.now() - 1000);
+  const before = db.prepare("SELECT COUNT(*) AS count FROM sessions WHERE user_id = ?").get(owner) as { count: number };
+  assert.ok(before.count >= 3);
+  const out = await authed(second, "/api/auth/signout", { method: "POST" });
+  assert.equal(out.status, 200);
+  const me = await authed(user.cookie, "/api/me");
+  assert.equal(me.status, 401);
+  const left = db.prepare("SELECT COUNT(*) AS count FROM sessions WHERE user_id = ?").get(owner) as { count: number };
+  assert.equal(left.count, 0);
+});
+
+test("an API key cannot export the account, and rotate revokes the old key", async () => {
+  const user = await signup();
+  const created = await authed(user.cookie, "/api/keys", { method: "POST", body: JSON.stringify({ name: "leak" }) });
+  const key = await created.json();
+  const exported = await fetch(`${base}/api/data/export`, { headers: { Authorization: `Bearer ${key.secret}` } });
+  assert.equal(exported.status, 401);
+  const me = await fetch(`${base}/api/me`, { headers: { Authorization: `Bearer ${key.secret}` } });
+  assert.equal(me.status, 401);
+  const models = await fetch(`${base}/v1/models`, { headers: { Authorization: `Bearer ${key.secret}` } });
+  assert.equal(models.status, 200);
+  const rotated = await authed(user.cookie, "/api/keys/rotate", { method: "POST", body: JSON.stringify({ id: key.key.id }) });
+  assert.equal(rotated.status, 200);
+  const next = await rotated.json();
+  assert.ok(next.secret);
+  assert.equal(next.apiKey, undefined);
+  const oldModels = await fetch(`${base}/v1/models`, { headers: { Authorization: `Bearer ${key.secret}` } });
+  assert.equal(oldModels.status, 401);
+  const newModels = await fetch(`${base}/v1/models`, { headers: { Authorization: `Bearer ${next.secret}` } });
+  assert.equal(newModels.status, 200);
+});
+
+test("temporary chat does not feed another user's history", async () => {
+  upstreamQueue = [{ status: 200, body: `${sseChunk("owned")}${sseChunk("", "stop")}data: [DONE]\n\n`, contentType: "text/event-stream" }];
+  const alice = await signup();
+  const saved = await authed(alice.cookie, "/api/chat", { method: "POST", body: JSON.stringify({ content: "secret fact" }) });
+  const savedSse = await readSse(saved);
+  const savedChat = savedSse.events.find((event) => event.event === "done")?.data.chat as { id: string };
+  const bob = await signup();
+  await authed(bob.cookie, "/api/settings", { method: "PUT", body: JSON.stringify({ temporaryChat: true }) });
+  upstreamQueue = [{ status: 200, body: `${sseChunk("temp")}${sseChunk("", "stop")}data: [DONE]\n\n`, contentType: "text/event-stream" }];
+  const stolen = await authed(bob.cookie, "/api/chat", { method: "POST", body: JSON.stringify({ chatId: savedChat.id, content: "what was said" }) });
+  assert.equal(stolen.status, 200);
+  const messages = db.prepare("SELECT COUNT(*) AS count FROM messages WHERE chat_id = ?").get(savedChat.id) as { count: number };
+  assert.equal(messages.count, 2);
+});
+
+test("malformed JSON does not echo the parser message", async () => {
+  const response = await fetch(`${base}/api/auth/signin`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{",
+  });
+  const text = await response.text();
+  assert.equal(response.status, 400);
+  assert.equal(text.includes("position"), false);
+  assert.match(text, /Invalid JSON/);
+});
+
+test("health checks the database", async () => {
+  const response = await fetch(`${base}/api/health`);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.db, true);
+});
+
+test("sidebar reports truncation past 100 visible chats", async () => {
+  const user = await signup();
+  const owner = (db.prepare("SELECT id FROM users WHERE username = ?").get(user.username) as { id: string }).id;
+  const insert = db.prepare("INSERT INTO chats VALUES (?, ?, ?, 0, ?, ?)");
+  for (let i = 0; i < 101; i += 1) insert.run(crypto.randomUUID(), owner, `chat ${i}`, i, i);
+  const list = await (await authed(user.cookie, "/api/chats")).json();
+  assert.equal(list.chats.length, 100);
+  assert.equal(list.truncated, true);
+  assert.equal(list.total, 101);
+});
+
+let failed = 0;
+for (const [name, fn] of checks) {
+  try {
+    await fn();
+    console.log(`ok  ${name}`);
+  } catch (error) {
+    failed += 1;
+    console.error(`FAIL ${name}`);
+    console.error(error);
+  }
+}
+
+await new Promise<void>((resolve) => server.close(() => resolve()));
+if (failed) {
+  console.error(`${failed} regression test(s) failed`);
+  process.exitCode = 1;
+} else {
+  console.log(`${checks.length} regression tests passed`);
+}

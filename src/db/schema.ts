@@ -6,8 +6,10 @@ CREATE TABLE IF NOT EXISTS users (
   plan TEXT NOT NULL DEFAULT 'free',
   requests_used INTEGER NOT NULL DEFAULT 0,
   signup_ip TEXT,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  username_lower TEXT
 );
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower ON users (username_lower);
 CREATE TABLE IF NOT EXISTS sessions (
   id_hash TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,

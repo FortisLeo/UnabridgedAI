@@ -6,7 +6,7 @@
     "dev": "tsx watch --clear-screen=false src/index.ts",
     "build": "tsc -p tsconfig.web.json && vite build && tsc --noEmit -p tsconfig.json",
     "start": "NODE_ENV=production tsx src/index.ts",
-    "test": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.web.json"
+    "test": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.web.json && node --import tsx src/audit.regression.ts"
   },
   "engines": {
     "node": ">=20"

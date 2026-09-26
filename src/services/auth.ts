@@ -9,10 +9,7 @@ const isIpHost = (host: string) => {
   return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(value) || value.includes(":");
 };
 
-const requestHttps = (req?: Request) => {
-  const proto = (req?.get("x-forwarded-proto") ?? req?.protocol ?? "").split(",")[0].trim().toLowerCase();
-  return proto === "https" || Boolean(req?.secure);
-};
+const requestHttps = (req?: Request) => Boolean(req?.secure);
 
 export const sessionCookie = (req?: Request): CookieOptions => {
   const host = (req?.hostname ?? "").trim();
