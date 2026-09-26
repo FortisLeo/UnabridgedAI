@@ -20,21 +20,7 @@ const duplicateUsers = db.prepare(`
   GROUP BY username_lower
   HAVING COUNT(*) > 1
 `).all() as Array<{ username_lower: string }>;
-const mergeDuplicate = db.transaction((usernameLower: string) => {
-  const users = db.prepare("SELECT id FROM users WHERE username_lower = ? ORDER BY created_at ASC, id ASC").all(usernameLower) as Array<{ id: string }>;
-  const [keeper, ...duplicates] = users;
-  if (!keeper) return;
-  for (const duplicate of duplicates) {
-    db.prepare("UPDATE sessions SET user_id = ? WHERE user_id = ?").run(keeper.id, duplicate.id);
-    db.prepare("UPDATE api_keys SET user_id = ? WHERE user_id = ?").run(keeper.id, duplicate.id);
-    db.prepare("UPDATE chats SET user_id = ? WHERE user_id = ?").run(keeper.id, duplicate.id);
-    db.prepare("DELETE FROM settings WHERE user_id = ? AND EXISTS (SELECT 1 FROM settings WHERE user_id = ?)").run(duplicate.id, keeper.id);
-    db.prepare("UPDATE settings SET user_id = ? WHERE user_id = ?").run(keeper.id, duplicate.id);
-    db.prepare("DELETE FROM users WHERE id = ?").run(duplicate.id);
-  }
-});
-for (const row of duplicateUsers) mergeDuplicate(row.username_lower);
-db.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower ON users (username_lower)");
+if (!duplicateUsers.length) db.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower ON users (username_lower)");
 const keyColumns = db.prepare("PRAGMA table_info(api_keys)").all() as Array<{ name: string }>;
 if (!keyColumns.some((column) => column.name === "name")) db.exec("ALTER TABLE api_keys ADD COLUMN name TEXT NOT NULL DEFAULT 'default'");
 db.exec("DROP TABLE IF EXISTS payments");

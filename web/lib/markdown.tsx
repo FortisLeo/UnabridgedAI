@@ -5,7 +5,6 @@ const inlinePattern = /(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|_[^_]+_|\[[^\]
 const safeHref = (value: string) => {
   const trimmed = value.trim();
   if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  if (/^mailto:/i.test(trimmed) && !/[\s<>"]/.test(trimmed)) return trimmed;
   return "";
 };
 
