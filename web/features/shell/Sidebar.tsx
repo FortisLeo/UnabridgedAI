@@ -39,7 +39,7 @@ export function Sidebar({
         <button className={view === "api" ? "active" : ""} onClick={() => onChangeView("api")}><span>⌘</span> Get API</button>
       </nav>
       <div className="side-note">history stays on your account.<br />search is opt-in per message.</div>
-      <button className="signout" onClick={async () => { await api("/api/auth/signout", { method: "POST" }); location.reload(); }} title="Signs this account out on every device">sign out everywhere <span>↘</span></button>
+      <button className="signout" onClick={async () => { await api("/api/auth/signout", { method: "POST" }); location.reload(); }} title="Signs out the current session">sign out <span>↘</span></button>
     </aside>
   );
 }

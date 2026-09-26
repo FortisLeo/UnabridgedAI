@@ -4,7 +4,7 @@ import { hash, passwordHash, passwordOk, randomUUID } from "../lib/crypto.ts";
 import { clientIp, isPrivateIp } from "../lib/ip.ts";
 import { SIGNUPS_PER_IP_WEEK, WEEK_MS } from "../lib/quota.ts";
 import { blacklistIp, isIpBlacklisted } from "../repositories/ip.ts";
-import { deleteSession, deleteUserSessions, findSessionUser } from "../repositories/sessions.ts";
+import { deleteSession, findSessionUser } from "../repositories/sessions.ts";
 import { countSignupsFromIp, findUserByUsername, insertUser } from "../repositories/users.ts";
 import { sessionCookie, signIn } from "../services/auth.ts";
 import { recordFailedSignin, signinGuard, signupGuard } from "../middleware/security.ts";
@@ -52,17 +52,9 @@ authRouter.post("/signin", signinGuard, (req, res) => {
 });
 
 authRouter.post("/signout", (req, res) => {
-  const sessions = [req.cookies.unabridged_session, req.cookies.n4n1_session].filter(Boolean);
-  let deletedAccount = false;
-  for (const sid of sessions) {
-    const row = findSessionUser(hash(sid), Date.now());
-    if (row) {
-      deleteUserSessions(row.user_id);
-      deletedAccount = true;
-      break;
-    }
+  for (const sid of [req.cookies.unabridged_session, req.cookies.n4n1_session].filter(Boolean)) {
+    deleteSession(hash(sid));
   }
-  if (!deletedAccount) for (const sid of sessions) deleteSession(hash(sid));
   clearSessionCookies(req, res);
   res.json({ ok: true });
 });

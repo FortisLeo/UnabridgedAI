@@ -334,7 +334,7 @@ test("renaming a chat does not un-archive it", async () => {
   assert.equal(list.chats.some((chat: { id: string }) => chat.id === id), false);
 });
 
-test("sign-out ends every session for the account and drops expired rows", async () => {
+test("sign-out removes presented sessions without revoking other devices", async () => {
   const user = await signup();
   const again = await fetch(`${base}/api/auth/signin`, {
     method: "POST",
@@ -343,14 +343,25 @@ test("sign-out ends every session for the account and drops expired rows", async
   });
   assert.equal(again.status, 200);
   const second = cookieOf(again);
+  const thirdResponse = await fetch(`${base}/api/auth/signin`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: user.username, password: user.password }),
+  });
+  assert.equal(thirdResponse.status, 200);
+  const third = cookieOf(thirdResponse);
+  const legacy = second.replace(/^unabridged_session=/, "n4n1_session=");
   const owner = (db.prepare("SELECT id FROM users WHERE username = ?").get(user.username) as { id: string }).id;
-  db.prepare("INSERT INTO sessions VALUES ('expired-hash', ?, ?)").run(owner, Date.now() - 1000);
   const before = db.prepare("SELECT COUNT(*) AS count FROM sessions WHERE user_id = ?").get(owner) as { count: number };
-  assert.ok(before.count >= 3);
-  const out = await authed(second, "/api/auth/signout", { method: "POST" });
+  assert.ok(before.count >= 2);
+  const out = await authed(`${user.cookie}; ${legacy}`, "/api/auth/signout", { method: "POST" });
   assert.equal(out.status, 200);
   const me = await authed(user.cookie, "/api/me");
   assert.equal(me.status, 401);
+  const remaining = await authed(second, "/api/me");
+  assert.equal(remaining.status, 401);
+  const otherDevice = await authed(third, "/api/me");
+  assert.equal(otherDevice.status, 200);
   const left = db.prepare("SELECT COUNT(*) AS count FROM sessions WHERE user_id = ?").get(owner) as { count: number };
   assert.equal(left.count, 0);
 });
