@@ -9,7 +9,6 @@ CREATE TABLE IF NOT EXISTS users (
   created_at INTEGER NOT NULL,
   username_lower TEXT
 );
-CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower ON users (username_lower);
 CREATE TABLE IF NOT EXISTS sessions (
   id_hash TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
