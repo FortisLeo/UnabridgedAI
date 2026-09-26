@@ -105,9 +105,9 @@ openaiRouter.post("/chat/completions", chatGuard, async (req, res) => {
   }
 
   const body = maskModelField(await readErrorBody(upstream)) as { choices?: unknown; error?: unknown };
-  if (!hasUsableCompletion(body) || body.error) {
+  if (!hasUsableCompletion(body) || body?.error) {
     releaseRequest(userId);
-    return res.status(502).json(body.error ? body : openaiError(publicError(502), "api_error"));
+    return res.status(502).json(body?.error ? body : openaiError(publicError(502), "api_error"));
   }
   res.status(200).json(body);
 });

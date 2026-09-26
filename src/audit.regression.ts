@@ -92,6 +92,37 @@ const authed = (cookie: string, path: string, init: FetchInit = {}) =>
 const checks: Array<[string, () => Promise<void>]> = [];
 const test = (name: string, fn: () => Promise<void>) => checks.push([name, fn]);
 
+test("empty browser generation returns 502 without charging", async () => {
+  const user = await signup();
+  upstreamQueue = Array.from({ length: 2 }, () => ({ status: 200, body: "data: [DONE]\n\n", contentType: "text/event-stream" }));
+  const response = await authed(user.cookie, "/api/chat", { method: "POST", body: JSON.stringify({ content: "hello" }) });
+  assert.equal(response.status, 502);
+  const row = db.prepare("SELECT requests_used FROM users WHERE username = ?").get(user.username) as { requests_used: number };
+  assert.equal(row.requests_used, 0);
+});
+
+test("API null replies release quota and tool replies remain usable", async () => {
+  const user = await signup();
+  const created = await authed(user.cookie, "/api/keys", { method: "POST", body: JSON.stringify({ name: "tools" }) });
+  const key = await created.json();
+  const tool = { id: "call_1", type: "function", function: { name: "lookup", arguments: "{}" } };
+  for (const stream of [false, true]) {
+    for (const usable of [false, true]) {
+      const payload = usable ? { choices: [{ [stream ? "delta" : "message"]: { content: null, tool_calls: [tool] }, finish_reason: "tool_calls" }] } : null;
+      upstreamQueue = [{ status: 200, body: stream ? `data: ${JSON.stringify(payload)}\n\ndata: [DONE]\n\n` : JSON.stringify(payload), contentType: stream ? "text/event-stream" : "application/json" }];
+      const response = await fetch(`${base}/v1/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key.secret}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ stream, messages: [{ role: "user", content: "lookup" }] }),
+      });
+      assert.equal(response.status, stream || usable ? 200 : 502);
+      await response.text();
+      const row = db.prepare("SELECT requests_used FROM users WHERE username = ?").get(user.username) as { requests_used: number };
+      assert.equal(row.requests_used, (stream ? 1 : 0) + Number(usable));
+    }
+  }
+});
+
 test("failed chat does not leave an empty session or burn quota", async () => {
   upstreamQueue = [{ status: 401, body: JSON.stringify({ error: { message: "invalid api key" } }) }];
   const user = await signup();

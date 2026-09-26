@@ -58,6 +58,13 @@ chatRouter.post("/", chatGuard, async (req, res) => {
   let first: IteratorResult<string>;
   try {
     first = await iterator.next();
+    let prefix = "";
+    while (!first.done && !first.value.trim()) {
+      prefix += first.value;
+      first = await iterator.next();
+    }
+    if (first.done) throw Object.assign(new Error(publicError(502)), { status: 502 });
+    first.value = prefix + first.value;
   } catch (error) {
     releaseRequest(userId);
     const status = typeof error === "object" && error && "status" in error ? Number((error as { status: number }).status) : 502;

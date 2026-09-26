@@ -16,6 +16,7 @@ const asText = (value: unknown): string => {
 };
 
 const deltaText = (payload: unknown) => {
+  if (!payload || typeof payload !== "object") return "";
   const choice = (payload as { choices?: Array<{ delta?: { content?: unknown; text?: unknown }; message?: { content?: unknown } }> }).choices?.[0];
   return asText(choice?.delta?.content) || asText(choice?.delta?.text) || asText(choice?.message?.content);
 };
@@ -105,12 +106,31 @@ export const streamFinished = (raw: string) => raw.split(/\r?\n/).some((line) =>
   }
 });
 
-export const streamHasUsableContent = (raw: string) => streamFrames(raw).some((frame) => Boolean(deltaText(frame).trim()));
+const usableFunction = (value: unknown) => {
+  if (!value || typeof value !== "object") return false;
+  const call = value as { name?: unknown; arguments?: unknown };
+  return (typeof call.name === "string" && Boolean(call.name.trim())) ||
+    (typeof call.arguments === "string" && Boolean(call.arguments.trim()));
+};
 
 export const hasUsableCompletion = (payload: unknown) => {
+  if (!payload || typeof payload !== "object") return false;
   const choices = (payload as { choices?: unknown }).choices;
-  return Array.isArray(choices) && choices.some((choice) => Boolean(deltaText({ choices: [choice] }).trim()));
+  return Array.isArray(choices) && choices.some((choice: unknown) => {
+    if (!choice || typeof choice !== "object") return false;
+    const parts = choice as { delta?: unknown; message?: unknown };
+    return [parts.delta, parts.message].some((part) => {
+      if (!part || typeof part !== "object") return false;
+      const result = part as { content?: unknown; text?: unknown; tool_calls?: unknown; function_call?: unknown };
+      return Boolean(asText(result.content).trim() || asText(result.text).trim()) ||
+        usableFunction(result.function_call) ||
+        (Array.isArray(result.tool_calls) && result.tool_calls.some((tool: unknown) =>
+          Boolean(tool && typeof tool === "object" && usableFunction((tool as { function?: unknown }).function))));
+    });
+  });
 };
+
+export const streamHasUsableContent = (raw: string) => streamFrames(raw).some(hasUsableCompletion);
 
 export const pipeCompletionStream = async (upstream: Response, res: { write: (chunk: string) => unknown; end: () => void }) => {
   if (!upstream.body) {
