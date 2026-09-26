@@ -152,16 +152,16 @@ const watchSolana = async () => {
       if (slot.value - item.slot < 0) continue;
       const deltas = await solanaTokenDeltas(rpcs[0] as JsonRpc, item.signature);
       for (const delta of deltas) {
-        if (delta.delta <= 0n || delta.owner !== invoice.address) continue;
+        if (delta.delta <= 0n || delta.account !== ata) continue;
         const wrong = delta.mint !== invoice.token_contract;
-        const key = `${item.signature}:${delta.instructionIndex}:`;
+        const key = `${item.signature}:${delta.accountIndex}:${delta.account}`;
         seen.add(key);
         upsertCredit({
           invoice_id: invoice.id,
           chain: "solana",
           tx_hash: item.signature,
-          output_index: delta.instructionIndex,
-          output_pubkey: null,
+          output_index: delta.accountIndex,
+          output_pubkey: delta.account,
           from_address: null,
           base_units: formatBaseUnits(delta.delta),
           height: delta.slot,
@@ -217,7 +217,7 @@ const watchMoneroInvoice = async (invoice: InvoiceRow, height: number) => {
       continue;
     }
     const isLocked = transfer.frozen || locked(unlock, height, now);
-    const confirmations = transfer.blockHeight > 0 ? Math.max(0, height - transfer.blockHeight) : 0;
+    const confirmations = transfer.blockHeight > 0 ? Math.max(0, height - transfer.blockHeight + 1) : 0;
     const outputIndex = transfer.globalIndex ?? 0;
     const pubkey = transfer.globalIndex == null ? transfer.pubkey : null;
     seen.add(`${transfer.txHash}:${outputIndex}:${pubkey ?? ""}`);

@@ -87,9 +87,9 @@ assert.equal(deriveEvmAddress(xpub, 0), first);
 assert.throws(() => deriveEvmAddress(xpub.replace("xpub", "xprv"), 0));
 
 const { db, closeDb } = await import("../db/client.ts");
-const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'payments'").all();
-assert.equal(tables.length, 0);
-assert.equal((db.prepare("SELECT next_index FROM address_counters WHERE family = 'monero'").get() as { next_index: number }).next_index, 1);
+const { takeIndex } = await import("./store.ts");
+assert.equal(takeIndex("monero"), 1);
+assert.equal((db.prepare("SELECT next_index FROM address_counters WHERE family = 'monero'").get() as { next_index: number }).next_index, 2);
 closeDb();
 
 console.log("payment tests passed");

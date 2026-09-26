@@ -118,35 +118,47 @@ export const solanaSlot = async (rpc: JsonRpc, commitment: "finalized" | "confir
 
 export type SolanaDelta = {
   signature: string;
-  instructionIndex: number;
+  accountIndex: number;
+  account: string;
   mint: string;
   owner: string;
   delta: bigint;
   slot: number;
 };
 
-export const solanaSignatures = async (rpc: JsonRpc, address: string, until?: string) => {
-  const result = (await rpc("getSignaturesForAddress", [address, { commitment: "finalized", limit: 100, ...(until ? { until } : {}) }])) as Array<{
-    signature?: string;
-    slot?: number;
-    err?: unknown;
-  }>;
-  return result.filter((item) => item.signature && item.err == null).map((item) => ({ signature: item.signature as string, slot: item.slot ?? 0 }));
+export const solanaSignatures = async (rpc: JsonRpc, address: string) => {
+  const signatures: Array<{ signature: string; slot: number }> = [];
+  let before: string | undefined;
+  for (;;) {
+    const page = (await rpc("getSignaturesForAddress", [address, { commitment: "finalized", limit: 100, ...(before ? { before } : {}) }])) as Array<{
+      signature: string;
+      slot: number;
+      err?: unknown;
+    }>;
+    signatures.push(...page.filter((item) => item.err == null).map(({ signature, slot }) => ({ signature, slot })));
+    if (page.length < 100) return signatures;
+    const next = page[page.length - 1]?.signature;
+    if (!next || next === before) throw new RpcError("Signature pagination did not advance");
+    before = next;
+  }
 };
 
 export const solanaTokenDeltas = async (rpc: JsonRpc, signature: string): Promise<SolanaDelta[]> => {
   const tx = (await rpc("getTransaction", [signature, { commitment: "finalized", encoding: "jsonParsed", maxSupportedTransactionVersion: 0 }])) as {
     slot?: number;
-    meta?: { preTokenBalances?: TokenBalance[]; postTokenBalances?: TokenBalance[] };
+    transaction?: { message: { accountKeys: Array<{ pubkey: string }> } };
+    meta?: { err?: unknown; preTokenBalances?: TokenBalance[]; postTokenBalances?: TokenBalance[] };
   } | null;
-  if (!tx?.meta) return [];
+  if (!tx?.meta || tx.meta.err != null) return [];
   const pre = new Map((tx.meta.preTokenBalances ?? []).map((item) => [balanceKey(item), item]));
   const post = tx.meta.postTokenBalances ?? [];
-  return post.flatMap((item, index) => {
+  return post.flatMap((item) => {
     const before = pre.get(balanceKey(item));
     const delta = BigInt(item.uiTokenAmount.amount) - BigInt(before?.uiTokenAmount.amount ?? "0");
     if (delta === 0n) return [];
-    return [{ signature, instructionIndex: index, mint: item.mint, owner: item.owner, delta, slot: tx.slot ?? 0 }];
+    const account = tx.transaction?.message.accountKeys[item.accountIndex]?.pubkey;
+    if (!account) throw new RpcError("Token account identity unavailable");
+    return [{ signature, accountIndex: item.accountIndex, account, mint: item.mint, owner: item.owner, delta, slot: tx.slot ?? 0 }];
   });
 };
 

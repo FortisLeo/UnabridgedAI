@@ -210,4 +210,4 @@ export const invoiceByAddress = (address: string) =>
   db.prepare("SELECT * FROM payment_invoices WHERE lower(address) = lower(?)").get(address) as InvoiceRow | undefined;
 
 export const ataOf = (address: string) =>
-  (db.prepare("SELECT ata FROM payment_addresses WHERE lower(address) = lower(?)").get(address) as { ata: string | null } | undefined)?.ata ?? null;
+  (db.prepare("SELECT ata FROM payment_addresses WHERE address = ?").get(address) as { ata: string | null } | undefined)?.ata ?? null;
