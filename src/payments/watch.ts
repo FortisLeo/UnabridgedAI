@@ -217,7 +217,7 @@ const watchMoneroInvoice = async (invoice: InvoiceRow, height: number) => {
       continue;
     }
     const isLocked = transfer.frozen || locked(unlock, height, now);
-    const confirmations = transfer.blockHeight > 0 ? Math.max(0, height - transfer.blockHeight + 1) : 0;
+    const confirmations = transfer.blockHeight > 0 ? Math.max(0, height - transfer.blockHeight) : 0;
     const outputIndex = transfer.globalIndex ?? 0;
     const pubkey = transfer.globalIndex == null ? transfer.pubkey : null;
     seen.add(`${transfer.txHash}:${outputIndex}:${pubkey ?? ""}`);
