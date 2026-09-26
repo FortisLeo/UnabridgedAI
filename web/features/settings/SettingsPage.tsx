@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Toggle } from "../../components/Toggle.tsx";
 import { api } from "../../lib/api.ts";
 import { defaultSettings, type Settings } from "../../types.ts";
@@ -15,16 +15,19 @@ export function SettingsPage({
   const [draft, setDraft] = useState(settings);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+  const saveVersion = useRef(0);
   useEffect(() => setDraft(settings), [settings]);
 
   const save = async (patch: Partial<Settings> = draft) => {
+    const version = ++saveVersion.current;
     setBusy(true);
     setStatus("");
     try {
       const data = await api<{ settings: Settings }>("/api/settings", { method: "PUT", body: JSON.stringify(patch) });
+      if (version !== saveVersion.current) return;
       const next = { ...defaultSettings, ...data.settings };
       setSettings(next);
-      setDraft(next);
+      setDraft((current) => ({ ...current, ...next }));
       setStatus("saved");
     } catch (error) {
       setStatus((error as Error).message);

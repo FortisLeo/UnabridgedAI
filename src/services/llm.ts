@@ -84,10 +84,16 @@ export const readErrorBody = async (response: Response) => {
 };
 
 /** True when the upstream stream delivered a finish reason or the OpenAI done sentinel. */
-export const streamFinished = (raw: string) => {
-  if (raw.includes("data: [DONE]")) return true;
-  return /"finish_reason"\s*:\s*"(?!null)[^"]+"/.test(raw);
-};
+export const streamFinished = (raw: string) => raw.split("\\n").some((line) => {
+  const data = line.trim().replace(/^data:\s*/, "");
+  if (data === "[DONE]") return true;
+  try {
+    const finish = (JSON.parse(data) as { choices?: Array<{ finish_reason?: unknown }> }).choices?.[0]?.finish_reason;
+    return typeof finish === "string" && finish.length > 0;
+  } catch {
+    return false;
+  }
+});
 
 export const pipeCompletionStream = async (upstream: Response, res: { write: (chunk: string) => unknown; end: () => void }) => {
   if (!upstream.body) {
@@ -109,10 +115,7 @@ export const pipeCompletionStream = async (upstream: Response, res: { write: (ch
       buffer = lines.pop() ?? "";
       if (lines.length) res.write(rewriteSse(lines.join("\n") + "\n"));
     }
-    if (buffer) {
-      seen += buffer;
-      res.write(rewriteSse(buffer));
-    }
+    if (buffer) res.write(rewriteSse(buffer));
   } catch {
     // client or upstream closed
   }
@@ -125,25 +128,28 @@ async function* readContentStream(response: Response) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  const consume = function* (line: string) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("data:")) return;
+    const data = trimmed.slice(5).trim();
+    if (!data || data === "[DONE]") return;
+    try {
+      const piece = deltaText(JSON.parse(data));
+      if (piece) yield piece;
+    } catch {
+      // ignore malformed SSE chunks
+    }
+  };
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");
     buffer = lines.pop() ?? "";
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed.startsWith("data:")) continue;
-      const data = trimmed.slice(5).trim();
-      if (!data || data === "[DONE]") continue;
-      try {
-        const piece = deltaText(JSON.parse(data));
-        if (piece) yield piece;
-      } catch {
-        // ignore malformed SSE chunks
-      }
-    }
+    for (const line of lines) yield* consume(line);
   }
+  buffer += decoder.decode();
+  if (buffer) yield* consume(buffer);
 }
 
 export async function* streamChat(

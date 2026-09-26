@@ -24,17 +24,16 @@ settingsRouter.put("/", (req, res) => {
     .safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "Invalid settings" });
   const userId = userIdOf(req);
-  const current = getSettings(userId);
+  const patch = parsed.data;
   updateSettings(userId, {
-    memory_enabled: Number(parsed.data.memoryEnabled ?? current.memory_enabled),
-    memory: parsed.data.memory ?? current.memory,
-    custom_instructions: parsed.data.customInstructions ?? current.custom_instructions,
-    web_search: Number(parsed.data.webSearch ?? current.web_search),
-    dark_web_search: Number(parsed.data.darkWebSearch ?? current.dark_web_search),
-    temporary_chat: Number(parsed.data.temporaryChat ?? current.temporary_chat),
-    save_history: Number(parsed.data.saveHistory ?? current.save_history),
-    model: current.model,
-    theme: parsed.data.theme ?? current.theme,
+    ...(patch.memoryEnabled === undefined ? {} : { memory_enabled: Number(patch.memoryEnabled) }),
+    ...(patch.memory === undefined ? {} : { memory: patch.memory }),
+    ...(patch.customInstructions === undefined ? {} : { custom_instructions: patch.customInstructions }),
+    ...(patch.webSearch === undefined ? {} : { web_search: Number(patch.webSearch) }),
+    ...(patch.darkWebSearch === undefined ? {} : { dark_web_search: Number(patch.darkWebSearch) }),
+    ...(patch.temporaryChat === undefined ? {} : { temporary_chat: Number(patch.temporaryChat) }),
+    ...(patch.saveHistory === undefined ? {} : { save_history: Number(patch.saveHistory) }),
+    ...(patch.theme === undefined ? {} : { theme: patch.theme }),
   });
   res.json({ settings: publicSettings(getSettings(userId)) });
 });

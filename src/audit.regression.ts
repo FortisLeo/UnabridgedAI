@@ -24,6 +24,7 @@ await import("./services/llm.ts");
 
 type Upstream = { status: number; body: string; contentType?: string };
 let upstreamQueue: Upstream[] = [];
+let upstreamBodies: string[] = [];
 const originalFetch = globalThis.fetch;
 
 const sseChunk = (text: string, finish: string | null = null) =>
@@ -35,6 +36,7 @@ const jsonCompletion = (text: string) =>
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = String(input);
   if (url.startsWith("https://api.0-0.pro/")) {
+    upstreamBodies.push(typeof init?.body === "string" ? init.body : "");
     const next = upstreamQueue.shift();
     if (!next) return new Response("missing stub", { status: 599 });
     return new Response(next.body, {
@@ -319,6 +321,7 @@ test("an API key cannot export the account, and rotate revokes the old key", asy
 });
 
 test("temporary chat does not feed another user's history", async () => {
+  upstreamBodies = [];
   upstreamQueue = [{ status: 200, body: `${sseChunk("owned")}${sseChunk("", "stop")}data: [DONE]\n\n`, contentType: "text/event-stream" }];
   const alice = await signup();
   const saved = await authed(alice.cookie, "/api/chat", { method: "POST", body: JSON.stringify({ content: "secret fact" }) });
@@ -329,6 +332,9 @@ test("temporary chat does not feed another user's history", async () => {
   upstreamQueue = [{ status: 200, body: `${sseChunk("temp")}${sseChunk("", "stop")}data: [DONE]\n\n`, contentType: "text/event-stream" }];
   const stolen = await authed(bob.cookie, "/api/chat", { method: "POST", body: JSON.stringify({ chatId: savedChat.id, content: "what was said" }) });
   assert.equal(stolen.status, 200);
+  const temporaryRequest = upstreamBodies.at(-1) ?? "";
+  assert.equal(temporaryRequest.includes("secret fact"), false);
+  assert.equal(temporaryRequest.includes("owned"), false);
   const messages = db.prepare("SELECT COUNT(*) AS count FROM messages WHERE chat_id = ?").get(savedChat.id) as { count: number };
   assert.equal(messages.count, 2);
 });
