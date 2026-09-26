@@ -9,6 +9,9 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Express } from "express";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { Markdown } from "../web/lib/markdown.tsx";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "uai-audit-")), "audit.db");
 process.env.ZERO_ZERO_API_KEY = "test-not-real";
@@ -121,6 +124,49 @@ test("API null replies release quota and tool replies remain usable", async () =
       assert.equal(row.requests_used, (stream ? 1 : 0) + Number(usable));
     }
   }
+});
+
+test("provider retry preserves the final error body", async () => {
+  upstreamQueue = [
+    { status: 500, body: JSON.stringify({ error: { message: "first failure" } }) },
+    { status: 500, body: JSON.stringify({ error: { message: "second failure" } }) },
+    { status: 500, body: JSON.stringify({ error: { message: "final failure" } }) },
+  ];
+  const user = await signup();
+  const created = await authed(user.cookie, "/api/keys", { method: "POST", body: JSON.stringify({ name: "retry" }) });
+  const key = await created.json();
+  const response = await fetch(`${base}/v1/chat/completions`, { method: "POST", headers: { Authorization: `Bearer ${key.secret}`, "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ role: "user", content: "hi" }] }) });
+  const body = await response.json();
+  assert.equal(body.error.message, "final failure");
+});
+
+test("settings patches preserve concurrent fields", async () => {
+  const user = await signup();
+  const responses = await Promise.all([
+    authed(user.cookie, "/api/settings", { method: "PUT", body: JSON.stringify({ webSearch: true }) }),
+    authed(user.cookie, "/api/settings", { method: "PUT", body: JSON.stringify({ darkWebSearch: true }) }),
+  ]);
+  assert.equal(responses[0].status, 200);
+  assert.equal(responses[1].status, 200);
+  const settings = await (await authed(user.cookie, "/api/settings")).json();
+  assert.equal(settings.settings.webSearch, true);
+  assert.equal(settings.settings.darkWebSearch, true);
+});
+
+test("partial browser replies are preserved", async () => {
+  upstreamQueue = [{ status: 200, body: sseChunk("partial"), contentType: "text/event-stream" }];
+  const user = await signup();
+  const response = await authed(user.cookie, "/api/chat", { method: "POST", body: JSON.stringify({ content: "hello" }) });
+  assert.equal(response.status, 200);
+  const sse = await readSse(response);
+  assert.equal(sse.events.find((event) => event.event === "done")?.data.reply, "partial");
+});
+
+test("markdown rejects non-http links", async () => {
+  const html = renderToStaticMarkup(React.createElement(Markdown, { text: "[mail](mailto:test@example.com) [ftp](ftp://example.com) [web](https://example.com)" }));
+  assert.equal(html.includes("mailto:"), false);
+  assert.equal(html.includes("ftp://"), false);
+  assert.equal(html.includes('href="https://example.com"'), true);
 });
 
 test("failed chat does not leave an empty session or burn quota", async () => {
@@ -297,10 +343,12 @@ test("X-Forwarded-For does not choose the signup address or skip a real blacklis
   assert.equal(again.response.status, 200);
 });
 
-test("a blacklisted socket address is blocked", async () => {
+test("private blacklist rows survive initialization and block requests", async () => {
   db.prepare("INSERT OR REPLACE INTO ip_blacklist VALUES ('127.0.0.1', 'test', ?)").run(Date.now());
+  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM ip_blacklist WHERE ip = '127.0.0.1'").get() as { count: number }).count, 1);
   const blocked = await signup("blockednet");
   assert.equal(blocked.response.status, 403);
+  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM ip_blacklist WHERE ip = '127.0.0.1'").get() as { count: number }).count, 1);
   db.prepare("DELETE FROM ip_blacklist WHERE ip = '127.0.0.1'").run();
 });
 
@@ -334,6 +382,13 @@ test("renaming a chat does not un-archive it", async () => {
   assert.equal(list.chats.some((chat: { id: string }) => chat.id === id), false);
 });
 
+test("stale primary cookies fall back to a valid legacy session", async () => {
+  const user = await signup();
+  const legacy = user.cookie.replace(/^unabridged_session=/, "n4n1_session=");
+  const response = await authed(`unabridged_session=stale; ${legacy}`, "/api/me");
+  assert.equal(response.status, 200);
+});
+
 test("sign-out removes presented sessions without revoking other devices", async () => {
   const user = await signup();
   const again = await fetch(`${base}/api/auth/signin`, {
@@ -363,7 +418,7 @@ test("sign-out removes presented sessions without revoking other devices", async
   const otherDevice = await authed(third, "/api/me");
   assert.equal(otherDevice.status, 200);
   const left = db.prepare("SELECT COUNT(*) AS count FROM sessions WHERE user_id = ?").get(owner) as { count: number };
-  assert.equal(left.count, 0);
+  assert.equal(left.count, 1);
 });
 
 test("an API key cannot export the account, and rotate revokes the old key", async () => {
@@ -385,6 +440,20 @@ test("an API key cannot export the account, and rotate revokes the old key", asy
   assert.equal(oldModels.status, 401);
   const newModels = await fetch(`${base}/v1/models`, { headers: { Authorization: `Bearer ${next.secret}` } });
   assert.equal(newModels.status, 200);
+});
+
+test("history-disabled chats do not load foreign history", async () => {
+  upstreamBodies = [];
+  const alice = await signup();
+  const saved = await authed(alice.cookie, "/api/chat", { method: "POST", body: JSON.stringify({ content: "private history" }) });
+  const savedSse = await readSse(saved);
+  const savedChat = savedSse.events.find((event) => event.event === "done")?.data.chat as { id: string };
+  const bob = await signup();
+  await authed(bob.cookie, "/api/settings", { method: "PUT", body: JSON.stringify({ saveHistory: false }) });
+  upstreamQueue = [{ status: 200, body: `${sseChunk("ok")}${sseChunk("", "stop")}data: [DONE]\n\n`, contentType: "text/event-stream" }];
+  const response = await authed(bob.cookie, "/api/chat", { method: "POST", body: JSON.stringify({ chatId: savedChat.id, content: "new question" }) });
+  assert.equal(response.status, 200);
+  assert.equal((upstreamBodies.at(-1) ?? "").includes("private history"), false);
 });
 
 test("temporary chat does not feed another user's history", async () => {
