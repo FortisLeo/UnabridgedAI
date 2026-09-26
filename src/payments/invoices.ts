@@ -44,7 +44,7 @@ export const createInvoice = async (userId: string, pair: AllowlistEntry, now = 
   const id = randomUUID();
   const family = familyOf(pair.chain);
   if (family === "evm" && !env.evmAccountXpub) throw new InvoiceError(503, "Payments are not available.");
-  if (family === "solana" && !env.solanaHelperUrl) throw new InvoiceError(503, "Payments are not available.");
+  if (family === "solana" && !env.solanaOwnerPubkeys.length) throw new InvoiceError(503, "Payments are not available.");
   if (family === "monero" && !moneroConfigured()) throw new InvoiceError(503, "Payments are not available.");
 
   const reserved = db.transaction(() => takeIndex(family))();
