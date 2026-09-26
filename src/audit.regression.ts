@@ -181,12 +181,14 @@ test("OpenAI route releases the claim when a 200 body is not a completion", asyn
   assert.equal(used.requests_used, 0);
 });
 
-test("OpenAI stream charges a finished stream and releases an unfinished one", async () => {
+test("OpenAI stream charges usable completions and releases unusable ones", async () => {
   const finished = `${sseChunk("hi")}${sseChunk("", "stop")}data: [DONE]\n\n`;
   const broken = sseChunk("partial");
+  const empty = "data: [DONE]\n\n";
   upstreamQueue = [
     { status: 200, body: finished, contentType: "text/event-stream" },
     { status: 200, body: broken, contentType: "text/event-stream" },
+    { status: 200, body: empty, contentType: "text/event-stream" },
   ];
   const user = await signup();
   const created = await authed(user.cookie, "/api/keys", { method: "POST", body: JSON.stringify({ name: "stream" }) });
@@ -210,6 +212,29 @@ test("OpenAI stream charges a finished stream and releases an unfinished one", a
   await bad.text();
   const afterBad = db.prepare("SELECT requests_used FROM users WHERE id = ?").get(id) as { requests_used: number };
   assert.equal(afterBad.requests_used, 1);
+  const emptyResponse = await fetch(`${base}/v1/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key.secret}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "unabridged", stream: true, messages: [{ role: "user", content: "hi" }] }),
+  });
+  assert.equal(emptyResponse.status, 200);
+  await emptyResponse.text();
+  const afterEmpty = db.prepare("SELECT requests_used FROM users WHERE id = ?").get(id) as { requests_used: number };
+  assert.equal(afterEmpty.requests_used, 1);
+});
+
+test("API quota exhaustion uses the web 402 status", async () => {
+  const user = await signup();
+  const id = (db.prepare("SELECT id FROM users WHERE username = ?").get(user.username) as { id: string }).id;
+  db.prepare("UPDATE users SET requests_used = 10 WHERE id = ?").run(id);
+  const created = await authed(user.cookie, "/api/keys", { method: "POST", body: JSON.stringify({ name: "quota" }) });
+  const key = await created.json();
+  const response = await fetch(`${base}/v1/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key.secret}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "unabridged", messages: [{ role: "user", content: "hi" }] }),
+  });
+  assert.equal(response.status, 402);
 });
 
 test("OpenAI route charges a finished completion once", async () => {

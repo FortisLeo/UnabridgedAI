@@ -5,7 +5,7 @@ import { isPublicModel, listPublicModels, maskModelField } from "../lib/models.t
 import { chatGuard } from "../middleware/security.ts";
 import { getSettings } from "../repositories/settings.ts";
 import { claimRequest, getUserUsage, releaseRequest } from "../repositories/usage.ts";
-import { completeChat, pipeCompletionStream, readErrorBody, streamFinished } from "../services/llm.ts";
+import { completeChat, hasUsableCompletion, pipeCompletionStream, readErrorBody, streamFinished, streamHasUsableContent } from "../services/llm.ts";
 import { withSystemPrompt, type ChatMessage } from "../services/prompt.ts";
 import { userIdOf } from "../types.ts";
 
@@ -69,7 +69,7 @@ openaiRouter.post("/chat/completions", chatGuard, async (req, res) => {
   const userId = userIdOf(req);
   const user = getUserUsage(userId);
   if (!user) return res.status(401).json(openaiError("Invalid API key.", "invalid_request_error", "invalid_api_key"));
-  if (!claimRequest(userId)) return res.status(429).json(paywall());
+  if (!claimRequest(userId)) return res.status(402).json(paywall());
 
   const settings = getSettings(userId);
   const { messages, ...rest } = parsed.data;
@@ -100,12 +100,12 @@ openaiRouter.post("/chat/completions", chatGuard, async (req, res) => {
     res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders?.();
     const finished = await pipeCompletionStream(upstream, res);
-    if (!finished || !streamFinished(finished)) releaseRequest(userId);
+    if (!streamHasUsableContent(finished) || !streamFinished(finished)) releaseRequest(userId);
     return;
   }
 
   const body = maskModelField(await readErrorBody(upstream)) as { choices?: unknown; error?: unknown };
-  if (!Array.isArray(body.choices) || body.error) {
+  if (!hasUsableCompletion(body) || body.error) {
     releaseRequest(userId);
     return res.status(502).json(body.error ? body : openaiError(publicError(502), "api_error"));
   }

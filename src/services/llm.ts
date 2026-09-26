@@ -84,6 +84,16 @@ export const readErrorBody = async (response: Response) => {
 };
 
 /** True when the upstream stream delivered a finish reason or the OpenAI done sentinel. */
+const streamFrames = (raw: string) => raw.split(/\r?\n/).flatMap((line) => {
+  const data = line.trim().replace(/^data:\s*/, "");
+  if (!data || data === "[DONE]") return [];
+  try {
+    return [JSON.parse(data) as unknown];
+  } catch {
+    return [];
+  }
+});
+
 export const streamFinished = (raw: string) => raw.split(/\r?\n/).some((line) => {
   const data = line.trim().replace(/^data:\s*/, "");
   if (data === "[DONE]") return true;
@@ -94,6 +104,13 @@ export const streamFinished = (raw: string) => raw.split(/\r?\n/).some((line) =>
     return false;
   }
 });
+
+export const streamHasUsableContent = (raw: string) => streamFrames(raw).some((frame) => Boolean(deltaText(frame).trim()));
+
+export const hasUsableCompletion = (payload: unknown) => {
+  const choices = (payload as { choices?: unknown }).choices;
+  return Array.isArray(choices) && choices.some((choice) => Boolean(deltaText({ choices: [choice] }).trim()));
+};
 
 export const pipeCompletionStream = async (upstream: Response, res: { write: (chunk: string) => unknown; end: () => void }) => {
   if (!upstream.body) {
