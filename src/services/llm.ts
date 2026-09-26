@@ -84,7 +84,7 @@ export const readErrorBody = async (response: Response) => {
 };
 
 /** True when the upstream stream delivered a finish reason or the OpenAI done sentinel. */
-export const streamFinished = (raw: string) => raw.split("\\n").some((line) => {
+export const streamFinished = (raw: string) => raw.split(/\r?\n/).some((line) => {
   const data = line.trim().replace(/^data:\s*/, "");
   if (data === "[DONE]") return true;
   try {
@@ -114,6 +114,11 @@ export const pipeCompletionStream = async (upstream: Response, res: { write: (ch
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
       if (lines.length) res.write(rewriteSse(lines.join("\n") + "\n"));
+    }
+    const trailing = decoder.decode();
+    if (trailing) {
+      seen += trailing;
+      buffer += trailing;
     }
     if (buffer) res.write(rewriteSse(buffer));
   } catch {

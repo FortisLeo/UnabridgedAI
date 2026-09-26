@@ -52,12 +52,17 @@ authRouter.post("/signin", signinGuard, (req, res) => {
 });
 
 authRouter.post("/signout", (req, res) => {
-  const sid = req.cookies.unabridged_session ?? req.cookies.n4n1_session;
-  if (sid) {
+  const sessions = [req.cookies.unabridged_session, req.cookies.n4n1_session].filter(Boolean);
+  let deletedAccount = false;
+  for (const sid of sessions) {
     const row = findSessionUser(hash(sid), Date.now());
-    if (row) deleteUserSessions(row.user_id);
-    else deleteSession(hash(sid));
+    if (row) {
+      deleteUserSessions(row.user_id);
+      deletedAccount = true;
+      break;
+    }
   }
+  if (!deletedAccount) for (const sid of sessions) deleteSession(hash(sid));
   clearSessionCookies(req, res);
   res.json({ ok: true });
 });

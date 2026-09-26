@@ -1,13 +1,8 @@
 import { db } from "../db/client.ts";
 import type { ChatRow, MessageRow } from "../types.ts";
 
-export const CHAT_LIST_LIMIT = 100;
-
 export const listChats = (userId: string) =>
-  db.prepare("SELECT id, title, created_at, updated_at FROM chats WHERE user_id = ? AND archived = 0 ORDER BY updated_at DESC LIMIT ?").all(userId, CHAT_LIST_LIMIT) as ChatRow[];
-
-export const countVisibleChats = (userId: string) =>
-  (db.prepare("SELECT COUNT(*) AS count FROM chats WHERE user_id = ? AND archived = 0").get(userId) as { count: number }).count;
+  db.prepare("SELECT id, title, created_at, updated_at FROM chats WHERE user_id = ? AND archived = 0 ORDER BY updated_at DESC").all(userId) as ChatRow[];
 
 export const listAllChats = (userId: string) =>
   db.prepare("SELECT id, title, archived, created_at, updated_at FROM chats WHERE user_id = ?").all(userId) as Array<ChatRow & { archived: number }>;

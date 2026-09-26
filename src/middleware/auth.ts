@@ -15,8 +15,8 @@ const apiKeyFrom = (req: Request) => bearer(req) || req.get("x-api-key")?.trim()
 
 /** Browser session only. API keys authorize /v1, not account export or settings. */
 export const auth = (req: Request, res: Response, next: NextFunction) => {
-  const sid = req.cookies.unabridged_session ?? req.cookies.n4n1_session;
-  if (sid) {
+  for (const sid of [req.cookies.unabridged_session, req.cookies.n4n1_session]) {
+    if (!sid) continue;
     const row = findSessionUser(hash(sid), Date.now());
     if (row) {
       (req as AuthedRequest).userId = row.user_id;

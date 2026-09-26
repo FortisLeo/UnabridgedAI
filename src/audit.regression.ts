@@ -358,15 +358,15 @@ test("health checks the database", async () => {
   assert.equal(body.db, true);
 });
 
-test("sidebar reports truncation past 100 visible chats", async () => {
+test("sidebar lists all visible chats", async () => {
   const user = await signup();
   const owner = (db.prepare("SELECT id FROM users WHERE username = ?").get(user.username) as { id: string }).id;
   const insert = db.prepare("INSERT INTO chats VALUES (?, ?, ?, 0, ?, ?)");
   for (let i = 0; i < 101; i += 1) insert.run(crypto.randomUUID(), owner, `chat ${i}`, i, i);
   const list = await (await authed(user.cookie, "/api/chats")).json();
-  assert.equal(list.chats.length, 100);
-  assert.equal(list.truncated, true);
-  assert.equal(list.total, 101);
+  assert.equal(list.chats.length, 101);
+  assert.equal("truncated" in list, false);
+  assert.equal("total" in list, false);
 });
 
 let failed = 0;

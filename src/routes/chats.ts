@@ -1,19 +1,13 @@
 import { Router } from "express";
 import { z } from "zod";
 import { paramId } from "../lib/http.ts";
-import { CHAT_LIST_LIMIT, countVisibleChats, deleteChat, listChats, listMessages, ownedChat, updateChat } from "../repositories/chats.ts";
+import { deleteChat, listChats, listMessages, ownedChat, updateChat } from "../repositories/chats.ts";
 import { userIdOf } from "../types.ts";
 
 export const chatsRouter = Router();
 
 chatsRouter.get("/", (req, res) => {
-  const userId = userIdOf(req);
-  const total = countVisibleChats(userId);
-  res.json({
-    chats: listChats(userId),
-    truncated: total > CHAT_LIST_LIMIT,
-    total,
-  });
+  res.json({ chats: listChats(userIdOf(req)) });
 });
 
 chatsRouter.get("/:id", (req, res) => {

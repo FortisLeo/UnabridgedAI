@@ -4,7 +4,6 @@ import type { ChatSummary, View } from "../../types.ts";
 
 export function Sidebar({
   chats,
-  truncated,
   activeChatId,
   view,
   onNewSession,
@@ -12,7 +11,6 @@ export function Sidebar({
   onChangeView,
 }: {
   chats: ChatSummary[];
-  truncated?: boolean;
   activeChatId: string | null;
   view: View;
   onNewSession: () => void;
@@ -34,7 +32,6 @@ export function Sidebar({
             <small>{timeAgo(chat.updated_at)}</small>
           </button>
         ))}
-        {truncated && <div className="empty-chats">older sessions are not shown</div>}
       </div>
       <nav>
         <button className={view === "settings" ? "active" : ""} onClick={() => onChangeView("settings")}><span>⚙</span> Settings</button>
