@@ -10,6 +10,12 @@ const resolveDbPath = () => {
   return isAbsolute(raw) ? raw : join(root, raw);
 };
 
+const list = (value: string | undefined) =>
+  (value ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+
 export const env = {
   port: Number(process.env.PORT ?? 3001),
   dbPath: resolveDbPath(),
@@ -18,6 +24,16 @@ export const env = {
   root,
   webRoot: join(root, "web"),
   webDist: join(root, "dist"),
+  evmAccountXpub: process.env.EVM_ACCOUNT_XPUB?.trim() ?? "",
+  ethereumRpcUrls: list(process.env.ETHEREUM_RPC_URLS),
+  polygonRpcUrls: list(process.env.POLYGON_RPC_URLS),
+  solanaRpcUrls: list(process.env.SOLANA_RPC_URLS),
+  solanaHelperUrl: process.env.SOLANA_HELPER_URL?.trim() ?? "",
+  solanaHelperToken: process.env.SOLANA_HELPER_TOKEN?.trim() ?? "",
+  moneroWalletRpcUrl: process.env.MONERO_WALLET_RPC_URL?.trim() ?? "",
+  moneroWalletRpcUser: process.env.MONERO_WALLET_RPC_USER?.trim() ?? "",
+  moneroWalletRpcPassword: process.env.MONERO_WALLET_RPC_PASSWORD ?? "",
+  paymentWatchMs: Number(process.env.PAYMENT_WATCH_MS ?? 15_000),
 };
 
 export const providerKeys = () =>

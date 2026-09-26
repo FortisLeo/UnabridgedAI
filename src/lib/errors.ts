@@ -1,4 +1,4 @@
-const leaked = /0-0\.pro|api\.0-0|ZERO_ZERO|x-api-key|sk-|Bearer\s+[A-Za-z0-9._-]+/gi;
+const leaked = /0-0\.pro|api\.0-0|ZERO_ZERO|x-api-key|sk-|Bearer\s+[A-Za-z0-9._-]+|xprv[1-9A-HJ-NP-Za-km-z]{20,}/gi;
 
 export const publicError = (status: number, fallback = "UnabridgedAI is unavailable right now.") => {
   if (status === 401 || status === 403) return "This channel is not authorized.";
