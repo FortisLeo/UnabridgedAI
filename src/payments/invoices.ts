@@ -6,7 +6,7 @@ import { QR_TTL_MS, type AllowlistEntry } from "./allowlist.ts";
 import { displayAmount, formatBaseUnits, moneroQuote, parseBaseUnits, stablecoinQuote } from "./amounts.ts";
 import { deriveEvmAddress } from "./evm-address.ts";
 import { associatedTokenAddress, isSolanaAddress } from "./solana-ata.ts";
-import { deriveSolanaOwner } from "./solana-helper.ts";
+import { deriveSolanaOwner, solanaConfigured } from "./solana-helper.ts";
 import { addressIndex, createSubaddress, isMainnetSubaddress, makeUri, moneroConfigured, setLookahead } from "./wallet-rpc.ts";
 import { sums } from "./settle.ts";
 import {
@@ -44,7 +44,7 @@ export const createInvoice = async (userId: string, pair: AllowlistEntry, now = 
   const id = randomUUID();
   const family = familyOf(pair.chain);
   if (family === "evm" && !env.evmAccountXpub) throw new InvoiceError(503, "Payments are not available.");
-  if (family === "solana" && !env.solanaOwnerPubkeys.length) throw new InvoiceError(503, "Payments are not available.");
+  if (family === "solana" && !solanaConfigured()) throw new InvoiceError(503, "Payments are not available.");
   if (family === "monero" && !moneroConfigured()) throw new InvoiceError(503, "Payments are not available.");
 
   const reserved = db.transaction(() => takeIndex(family))();
