@@ -11,16 +11,27 @@ const userColumns = db.prepare("PRAGMA table_info(users)").all() as Array<{ name
 if (!userColumns.some((column) => column.name === "requests_used")) db.exec("ALTER TABLE users ADD COLUMN requests_used INTEGER NOT NULL DEFAULT 0");
 if (!userColumns.some((column) => column.name === "signup_ip")) db.exec("ALTER TABLE users ADD COLUMN signup_ip TEXT");
 if (!userColumns.some((column) => column.name === "username_lower")) db.exec("ALTER TABLE users ADD COLUMN username_lower TEXT");
-db.exec("DROP INDEX IF EXISTS users_username_lower");
-const normalizeUsername = db.prepare("UPDATE users SET username_lower = lower(trim(username)) WHERE id = ?");
-for (const row of db.prepare("SELECT id FROM users").all() as Array<{ id: string }>) normalizeUsername.run(row.id);
-const duplicateUsers = db.prepare(`
-  SELECT username_lower
-  FROM users
-  GROUP BY username_lower
-  HAVING COUNT(*) > 1
-`).all() as Array<{ username_lower: string }>;
-if (!duplicateUsers.length) db.exec("CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower ON users (username_lower)");
+db.transaction(() => {
+  db.exec("DROP INDEX IF EXISTS users_username_lower");
+  db.exec("UPDATE users SET username_lower = lower(trim(username))");
+  const duplicates = db.prepare(`
+    SELECT newer.id, older.id AS keeper_id
+    FROM users AS newer
+    JOIN users AS older ON older.username_lower = newer.username_lower
+    WHERE older.id = (
+      SELECT id FROM users WHERE username_lower = newer.username_lower
+      ORDER BY created_at ASC, id ASC LIMIT 1
+    ) AND newer.id != older.id
+  `).all() as Array<{ id: string; keeper_id: string }>;
+  for (const duplicate of duplicates) {
+    db.prepare("UPDATE chats SET user_id = ? WHERE user_id = ?").run(duplicate.keeper_id, duplicate.id);
+    db.prepare("DELETE FROM sessions WHERE user_id = ?").run(duplicate.id);
+    db.prepare("DELETE FROM api_keys WHERE user_id = ?").run(duplicate.id);
+    db.prepare("DELETE FROM settings WHERE user_id = ?").run(duplicate.id);
+    db.prepare("DELETE FROM users WHERE id = ?").run(duplicate.id);
+  }
+  db.exec("CREATE UNIQUE INDEX users_username_lower ON users (username_lower)");
+})();
 const keyColumns = db.prepare("PRAGMA table_info(api_keys)").all() as Array<{ name: string }>;
 if (!keyColumns.some((column) => column.name === "name")) db.exec("ALTER TABLE api_keys ADD COLUMN name TEXT NOT NULL DEFAULT 'default'");
 db.exec("DROP TABLE IF EXISTS payments");
