@@ -66,7 +66,7 @@ export const makeUri = async (address: string, amount: string) => {
 };
 
 export const setLookahead = async (minor: number) => {
-  await walletRpc("set_subaddress_lookahead", { major_idx: 1, minor_idx: minor });
+  await walletRpc("set_subaddress_lookahead", { major_idx: 0, minor_idx: minor });
 };
 
 export const walletHeight = async () => {

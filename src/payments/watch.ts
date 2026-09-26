@@ -5,7 +5,7 @@ import { formatBaseUnits } from "./amounts.ts";
 import { balanceOf, createJsonRpc, evmChainId, finalizedHead, getReceipt, getTransferLogs, solanaSignatures, solanaSlot, solanaTokenDeltas, usdtFee, type JsonRpc } from "./chain.ts";
 import { padTopicAddress } from "./evm-address.ts";
 import { applySettlement } from "./settle.ts";
-import { creditsFor, cursorOf, evmAddresses, invoiceByAddress, markMissing, saveCursor, upsertCredit, watchedInvoices, type InvoiceRow } from "./store.ts";
+import { ataOf, creditsFor, cursorOf, evmAddresses, invoiceByAddress, markMissing, saveCursor, upsertCredit, watchedInvoices, type InvoiceRow } from "./store.ts";
 import { incomingTransfers, refreshWallet, unlockTimeOf, walletHeight, walletRpc } from "./wallet-rpc.ts";
 
 type Backoff = { delay: number; nextAt: number };
@@ -144,7 +144,9 @@ const watchSolana = async () => {
   );
   const invoices = watchedInvoices().filter((invoice) => invoice.chain === "solana");
   for (const invoice of invoices) {
-    const signatures = await solanaSignatures(rpcs[0] as JsonRpc, invoice.address);
+    const ata = ataOf(invoice.address);
+    if (!ata) continue;
+    const signatures = await solanaSignatures(rpcs[0] as JsonRpc, ata);
     const seen = new Set<string>();
     for (const item of signatures) {
       if (slot.value - item.slot < 0) continue;
