@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Toggle } from "../../components/Toggle.tsx";
 import { api } from "../../lib/api.ts";
-import { defaultSettings, type Settings } from "../../types.ts";
+import { mergeSettingsPatch, type Settings } from "../../types.ts";
 
 export function SettingsPage({
   settings,
@@ -25,9 +25,8 @@ export function SettingsPage({
     try {
       const data = await api<{ settings: Settings }>("/api/settings", { method: "PUT", body: JSON.stringify(patch) });
       if (version !== saveVersion.current) return;
-      const next = { ...defaultSettings, ...data.settings };
-      setSettings(next);
-      setDraft((current) => ({ ...current, ...next }));
+      setSettings((current) => mergeSettingsPatch(current, patch));
+      setDraft((current) => mergeSettingsPatch(current, patch));
       setStatus("saved");
     } catch (error) {
       setStatus((error as Error).message);

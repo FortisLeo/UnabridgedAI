@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../../lib/api.ts";
 import { Markdown } from "../../lib/markdown.tsx";
-import { defaultSettings, type ChatSummary, type Message, type Quota, type Settings } from "../../types.ts";
+import { mergeSettingsPatch, type ChatSummary, type Message, type Quota, type Settings } from "../../types.ts";
 import { Paywall } from "../billing/Paywall.tsx";
 
 export function ChatView({
@@ -45,7 +45,7 @@ export function ChatView({
     const seq = ++toggleSeq.current;
     const data = await api<{ settings: Settings }>("/api/settings", { method: "PUT", body: JSON.stringify(next) });
     if (seq !== toggleSeq.current) return;
-    setSettings({ ...defaultSettings, ...data.settings });
+    setSettings((current) => mergeSettingsPatch(current, next));
   };
 
   const send = async () => {

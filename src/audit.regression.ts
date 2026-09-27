@@ -3,15 +3,17 @@
  * Runs against an in-process Express app and a stubbed provider. No network.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 import type { Express } from "express";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Markdown } from "../web/lib/markdown.tsx";
+import { defaultSettings, mergeSettingsPatch, type Settings } from "../web/types.ts";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "uai-audit-")), "audit.db");
 process.env.ZERO_ZERO_API_KEY = "test-not-real";
@@ -138,6 +140,21 @@ test("provider retry preserves the final error body", async () => {
   const response = await fetch(`${base}/v1/chat/completions`, { method: "POST", headers: { Authorization: `Bearer ${key.secret}`, "Content-Type": "application/json" }, body: JSON.stringify({ messages: [{ role: "user", content: "hi" }] }) });
   const body = await response.json();
   assert.equal(body.error.message, "final failure");
+});
+
+test("settings patches preserve out-of-order browser state", async () => {
+  const initial: Settings = { ...defaultSettings, webSearch: false, darkWebSearch: false };
+  const responses = [
+    Promise.resolve({ settings: { ...initial, webSearch: true } }),
+    Promise.resolve({ settings: { ...initial, darkWebSearch: true } }),
+  ];
+  let state = { ...initial };
+  const apply = (patch: Partial<Settings>) => { state = mergeSettingsPatch(state, patch); };
+  const second = await responses[1];
+  apply({ darkWebSearch: second.settings.darkWebSearch });
+  const first = await responses[0];
+  apply({ webSearch: first.settings.webSearch });
+  assert.deepEqual(state, { webSearch: true, darkWebSearch: true });
 });
 
 test("settings patches preserve concurrent fields", async () => {
@@ -341,6 +358,13 @@ test("X-Forwarded-For does not choose the signup address or skip a real blacklis
   db.prepare("INSERT INTO ip_blacklist VALUES ('203.0.113.9', 'planted', ?)").run(Date.now());
   const again = await signup("spoofeduser2", "password12345", { "X-Forwarded-For": "203.0.113.9" });
   assert.equal(again.response.status, 200);
+});
+
+test("startup preserves a pre-existing private blacklist row", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "uai-blacklist-startup-"));
+  const database = join(directory, "audit.db");
+  const script = "import Database from 'better-sqlite3'; const db = new Database(process.env.DB_PATH); db.exec(`CREATE TABLE ip_blacklist (ip TEXT PRIMARY KEY, reason TEXT NOT NULL, created_at INTEGER NOT NULL); INSERT INTO ip_blacklist VALUES ('127.0.0.1', 'private', 1);`); db.close(); import('./src/db/client.ts').then(({ db }) => { if (!db.prepare(\"SELECT 1 FROM ip_blacklist WHERE ip='127.0.0.1'\").get()) process.exit(1); });";
+  execFileSync(process.execPath, ["--import", "tsx", "-e", script], { cwd: process.cwd(), env: { ...process.env, DB_PATH: database } });
 });
 
 test("private blacklist rows survive initialization and block requests", async () => {
