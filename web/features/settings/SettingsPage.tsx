@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Toggle } from "../../components/Toggle.tsx";
+import { settingsSaves } from "../../lib/settings-saves.ts";
 import { api } from "../../lib/api.ts";
 import { mergeSettingsPatch, type Settings } from "../../types.ts";
 
@@ -15,23 +16,32 @@ export function SettingsPage({
   const [draft, setDraft] = useState(settings);
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
-  const saveVersion = useRef(0);
-  useEffect(() => setDraft(settings), [settings]);
+  const saves = useRef(settingsSaves());
+  const pending = useRef(0);
+  const previous = useRef(settings);
+  useEffect(() => {
+    const before = previous.current;
+    previous.current = settings;
+    setDraft((current) => ({ ...current, ...Object.fromEntries(
+      (Object.keys(settings) as Array<keyof Settings>).filter((key) => current[key] === before[key]).map((key) => [key, settings[key]]),
+    ) }));
+  }, [settings]);
 
-  const save = async (patch: Partial<Settings> = draft) => {
-    const version = ++saveVersion.current;
+  const save = async (patch: Partial<Settings> = { memory: draft.memory, customInstructions: draft.customInstructions }) => {
+    const accepted = saves.current(patch);
+    pending.current += 1;
     setBusy(true);
     setStatus("");
     try {
-      const data = await api<{ settings: Settings }>("/api/settings", { method: "PUT", body: JSON.stringify(patch) });
-      if (version !== saveVersion.current) return;
-      setSettings((current) => mergeSettingsPatch(current, patch));
-      setDraft((current) => mergeSettingsPatch(current, patch));
+      await api("/api/settings", { method: "PUT", body: JSON.stringify(patch) });
+      const saved = accepted();
+      setSettings((current) => mergeSettingsPatch(current, saved));
       setStatus("saved");
     } catch (error) {
       setStatus((error as Error).message);
     } finally {
-      setBusy(false);
+      pending.current -= 1;
+      setBusy(pending.current > 0);
     }
   };
 

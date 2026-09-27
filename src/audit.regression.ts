@@ -3,7 +3,7 @@
  * Runs against an in-process Express app and a stubbed provider. No network.
  */
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -13,7 +13,6 @@ import type { Express } from "express";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { Markdown } from "../web/lib/markdown.tsx";
-import { defaultSettings, mergeSettingsPatch, type Settings } from "../web/types.ts";
 
 process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "uai-audit-")), "audit.db");
 process.env.ZERO_ZERO_API_KEY = "test-not-real";
@@ -142,19 +141,8 @@ test("provider retry preserves the final error body", async () => {
   assert.equal(body.error.message, "final failure");
 });
 
-test("settings patches preserve out-of-order browser state", async () => {
-  const initial: Settings = { ...defaultSettings, webSearch: false, darkWebSearch: false };
-  const responses = [
-    Promise.resolve({ settings: { ...initial, webSearch: true } }),
-    Promise.resolve({ settings: { ...initial, darkWebSearch: true } }),
-  ];
-  let state = { ...initial };
-  const apply = (patch: Partial<Settings>) => { state = mergeSettingsPatch(state, patch); };
-  const second = await responses[1];
-  apply({ darkWebSearch: second.settings.darkWebSearch });
-  const first = await responses[0];
-  apply({ webSearch: first.settings.webSearch });
-  assert.deepEqual(state, { webSearch: true, darkWebSearch: true });
+test("settings ordering and partial replies remain visible in components", async () => {
+  execFileSync(process.execPath, ["--import", "tsx", "web/ui.regression.tsx"], { env: { ...process.env, TSX_TSCONFIG_PATH: "tsconfig.web.json" }, stdio: "pipe" });
 });
 
 test("settings patches preserve concurrent fields", async () => {

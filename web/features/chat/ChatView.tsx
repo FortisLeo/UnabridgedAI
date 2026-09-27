@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../../lib/api.ts";
+import { settingsSaves } from "../../lib/settings-saves.ts";
 import { Markdown } from "../../lib/markdown.tsx";
 import { mergeSettingsPatch, type ChatSummary, type Message, type Quota, type Settings } from "../../types.ts";
 import { Paywall } from "../billing/Paywall.tsx";
@@ -40,12 +41,12 @@ export function ChatView({
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
   }, [messages, busy]);
 
-  const toggleSeq = useRef(0);
+  const saves = useRef(settingsSaves());
   const persistToggles = async (next: { webSearch?: boolean; darkWebSearch?: boolean }) => {
-    const seq = ++toggleSeq.current;
-    const data = await api<{ settings: Settings }>("/api/settings", { method: "PUT", body: JSON.stringify(next) });
-    if (seq !== toggleSeq.current) return;
-    setSettings((current) => mergeSettingsPatch(current, next));
+    const accepted = saves.current(next);
+    await api("/api/settings", { method: "PUT", body: JSON.stringify(next) });
+    const patch = accepted();
+    setSettings((current) => mergeSettingsPatch(current, patch));
   };
 
   const send = async () => {
