@@ -33,6 +33,9 @@ export const env = {
   moneroWalletRpcUser: process.env.MONERO_WALLET_RPC_USER?.trim() ?? "",
   moneroWalletRpcPassword: process.env.MONERO_WALLET_RPC_PASSWORD ?? "",
   paymentWatchMs: Number(process.env.PAYMENT_WATCH_MS ?? 15_000),
+  sweepSignerUrl: process.env.SWEEP_SIGNER_URL?.trim() ?? "",
+  polygonColdAddress: process.env.POLYGON_COLD_ADDRESS?.trim() ?? "",
+  ethereumColdAddress: process.env.ETHEREUM_COLD_ADDRESS?.trim() ?? "",
 };
 
 export const providerKeys = () =>

@@ -46,6 +46,8 @@ const invoice = {
   note: null,
   uri: null,
   second_read_ok: 0,
+  swept_at: null,
+  sweep_tx: null,
 };
 
 const credit = {
@@ -91,6 +93,42 @@ const { db, closeDb } = await import("../db/client.ts");
 const { takeIndex } = await import("./store.ts");
 assert.equal(takeIndex("monero"), 1);
 assert.equal((db.prepare("SELECT next_index FROM address_counters WHERE family = 'monero'").get() as { next_index: number }).next_index, 2);
+const { sweepCandidates, markSwept, recordSweep } = await import("./store.ts");
+const sweptUser = "sweep-user";
+db.prepare("INSERT INTO users (id, username, password_hash, plan, created_at) VALUES (?, 'sweep', 'x', 'pro', 1)").run(sweptUser);
+const deposit = "0x1111111111111111111111111111111111111111";
+db.prepare("INSERT INTO payment_addresses (address, family, derivation_index, ata, state, created_at) VALUES (?, 'evm', 7, NULL, 'assigned', 1)").run(deposit);
+db.prepare(
+  `INSERT INTO payment_invoices (
+    id, user_id, chain, asset, token_contract, expected_base_units, address, derivation_index, status,
+    qr_expires_at, created_at, updated_at, grant_applied_at
+  ) VALUES ('sweep-inv', ?, 'polygon', 'usdc', '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', '10000', ?, 7, 'succeeded', 2, 1, 1, 1)`,
+).run(sweptUser, deposit);
+assert.equal(sweepCandidates("polygon").length, 1);
+assert.equal(sweepCandidates("ethereum").length, 0);
+recordSweep({
+  id: "sweep-1",
+  invoiceId: "sweep-inv",
+  chain: "polygon",
+  asset: "usdc",
+  tokenContract: "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359",
+  fromAddress: deposit,
+  derivationIndex: 7,
+  toAddress: "0x2222222222222222222222222222222222222222",
+  baseUnits: "10000",
+  nonce: 0,
+  gasPrice: "1",
+  gasLimit: 80000,
+  unsignedTx: "0x",
+  now: 3,
+});
+assert.equal(markSwept("sweep-inv", "0xabc", 4), true);
+assert.equal(markSwept("sweep-inv", "0xdef", 5), false);
+assert.equal(sweepCandidates("polygon").length, 0);
+const addressState = db.prepare("SELECT state FROM payment_addresses WHERE address = ?").get(deposit) as { state: string };
+assert.equal(addressState.state, "swept");
+const nextIndex = takeIndex("evm");
+assert.notEqual(nextIndex, 7);
 closeDb();
 
 console.log("payment tests passed");

@@ -88,10 +88,30 @@ CREATE TABLE IF NOT EXISTS payment_invoices (
   refund_requested_at INTEGER,
   note TEXT,
   uri TEXT,
-  second_read_ok INTEGER NOT NULL DEFAULT 0
+  second_read_ok INTEGER NOT NULL DEFAULT 0,
+  swept_at INTEGER,
+  sweep_tx TEXT
 );
 CREATE INDEX IF NOT EXISTS payment_invoices_user ON payment_invoices (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS payment_invoices_status ON payment_invoices (status, chain);
+CREATE TABLE IF NOT EXISTS payment_sweeps (
+  id TEXT PRIMARY KEY,
+  invoice_id TEXT NOT NULL REFERENCES payment_invoices(id),
+  chain TEXT NOT NULL,
+  asset TEXT NOT NULL,
+  token_contract TEXT NOT NULL,
+  from_address TEXT NOT NULL,
+  derivation_index INTEGER NOT NULL,
+  to_address TEXT NOT NULL,
+  base_units TEXT NOT NULL,
+  nonce INTEGER NOT NULL,
+  gas_price TEXT NOT NULL,
+  gas_limit INTEGER NOT NULL,
+  unsigned_tx TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  broadcast_tx TEXT,
+  broadcast_at INTEGER
+);
 CREATE TABLE IF NOT EXISTS payment_credits (
   id TEXT PRIMARY KEY,
   invoice_id TEXT NOT NULL REFERENCES payment_invoices(id),

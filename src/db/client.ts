@@ -13,6 +13,9 @@ if (!userColumns.some((column) => column.name === "signup_ip")) db.exec("ALTER T
 const keyColumns = db.prepare("PRAGMA table_info(api_keys)").all() as Array<{ name: string }>;
 if (!keyColumns.some((column) => column.name === "name")) db.exec("ALTER TABLE api_keys ADD COLUMN name TEXT NOT NULL DEFAULT 'default'");
 db.exec("INSERT OR IGNORE INTO address_counters (family, next_index) VALUES ('evm', 0), ('solana', 0), ('monero', 1)");
+const invoiceColumns = db.prepare("PRAGMA table_info(payment_invoices)").all() as Array<{ name: string }>;
+if (!invoiceColumns.some((column) => column.name === "swept_at")) db.exec("ALTER TABLE payment_invoices ADD COLUMN swept_at INTEGER");
+if (!invoiceColumns.some((column) => column.name === "sweep_tx")) db.exec("ALTER TABLE payment_invoices ADD COLUMN sweep_tx TEXT");
 db.prepare(
   "DELETE FROM ip_events WHERE ip IN ('127.0.0.1', '::1', 'localhost', 'unknown') OR ip LIKE '127.%' OR ip LIKE '192.168.%' OR ip LIKE '10.%'",
 ).run();
