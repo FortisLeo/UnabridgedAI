@@ -45,6 +45,19 @@ try {
   const polled = await fetch(`${base}/billing/invoices/${invoice.id}`, { headers: { Cookie: cookie } });
   assert.equal(polled.status, 200);
   assert.deepEqual(await polled.json(), invoice);
+  const blocked = await fetch(`${base}/billing/invoices`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: cookie },
+    body: JSON.stringify({ chain: "polygon", asset: "usdc" }),
+  });
+  const blockedBody = await blocked.json();
+  assert.equal(blocked.status, 409);
+  assert.equal(blockedBody.invoiceId, invoice.id);
+  const billing = await fetch(`${base}/billing`, { headers: { Cookie: cookie } });
+  const billingBody = await billing.json();
+  assert.equal(billing.status, 200);
+  assert.equal(billingBody.invoice?.id, invoice.id);
+  assert.equal(billingBody.invoice?.address, invoice.address);
   console.log("authenticated Ethereum USDC invoice creation and polling passed");
 } finally {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

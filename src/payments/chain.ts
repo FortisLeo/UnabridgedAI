@@ -33,6 +33,12 @@ export const finalizedHead = async (rpc: JsonRpc) => {
   return { height: hexToNumber(block.number), hash: block.hash.toLowerCase() };
 };
 
+export const blockHeader = async (rpc: JsonRpc, height: number) => {
+  const block = (await rpc("eth_getBlockByNumber", [`0x${height.toString(16)}`, false])) as { number?: string; hash?: string } | null;
+  if (!block?.number || !block.hash) return null;
+  return { height: hexToNumber(block.number), hash: block.hash.toLowerCase() };
+};
+
 export type TransferLog = {
   txHash: string;
   logIndex: number;
@@ -54,6 +60,11 @@ export const getTransferLogs = async (rpc: JsonRpc, fromBlock: number, toBlock: 
     },
   ])) as Array<Record<string, unknown>>;
   return logs.map(parseTransferLog);
+};
+
+export const isRangeError = (error: unknown) => {
+  const message = error instanceof Error ? error.message : "";
+  return /block range|limited to \d|query returned more than|response size|exceed maximum block range/i.test(message);
 };
 
 const parseTransferLog = (log: Record<string, unknown>): TransferLog => {

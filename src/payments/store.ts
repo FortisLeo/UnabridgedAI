@@ -51,7 +51,7 @@ const OPEN_FOR_CREATE = ["open", "underpaid", "exact_pending", "overpaid"];
 
 export const blockingInvoice = (userId: string) =>
   db
-    .prepare(`SELECT id FROM payment_invoices WHERE user_id = ? AND status IN (${OPEN_FOR_CREATE.map(() => "?").join(",")}) LIMIT 1`)
+    .prepare(`SELECT id FROM payment_invoices WHERE user_id = ? AND status IN (${OPEN_FOR_CREATE.map(() => "?").join(",")}) ORDER BY created_at DESC LIMIT 1`)
     .get(userId, ...OPEN_FOR_CREATE) as { id: string } | undefined;
 
 export const userCreatesSince = (userId: string, since: number) =>

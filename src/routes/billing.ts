@@ -5,14 +5,15 @@ import { userIdOf } from "../types.ts";
 import { auth } from "../middleware/auth.ts";
 import { invoiceCreateGuard } from "../middleware/security.ts";
 import { resolvePair } from "../payments/allowlist.ts";
-import { createInvoice, InvoiceError, readInvoice, submitRefundAddress } from "../payments/invoices.ts";
+import { createInvoice, InvoiceError, readInvoice, resumeInvoice, submitRefundAddress } from "../payments/invoices.ts";
 
 export const billingRouter = Router();
 
 billingRouter.get("/", auth, (req, res) => {
   const user = getUserUsage(userIdOf(req));
   if (!user) return res.status(401).json({ error: "Sign in required" });
-  res.json({ quota: quotaFor(user) });
+  const userId = userIdOf(req);
+  res.json({ quota: quotaFor(user), invoice: resumeInvoice(userId) });
 });
 
 billingRouter.post("/invoices", auth, invoiceCreateGuard, async (req, res) => {

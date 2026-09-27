@@ -108,6 +108,12 @@ export const readInvoice = (userId: string, id: string) => {
   return present(invoice, creditsFor(id));
 };
 
+export const resumeInvoice = (userId: string) => {
+  const blocking = blockingInvoice(userId);
+  if (!blocking) return null;
+  return readInvoice(userId, blocking.id);
+};
+
 export const submitRefundAddress = (userId: string, id: string, address: string, chain: string, now = Date.now()) => {
   const invoice = getInvoice(id);
   if (!invoice || invoice.user_id !== userId) return null;
