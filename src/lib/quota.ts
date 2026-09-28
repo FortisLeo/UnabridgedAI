@@ -1,4 +1,4 @@
-export const FREE_REQUEST_LIMIT = 10;
+export const FREE_REQUEST_LIMIT = 3;
 export const SIGNUPS_PER_IP_WEEK = 8;
 export const WEEK_MS = 1000 * 60 * 60 * 24 * 7;
 export const SIGNUP_RATE = { windowMs: 60 * 60 * 1000, max: 10 };

@@ -212,7 +212,7 @@ test("a successful chat is stored once and counts as one request", async () => {
 test("concurrent sends cannot all pass the last free request", async () => {
   const user = await signup();
   const id = (db.prepare("SELECT id FROM users WHERE username = ?").get(user.username) as { id: string }).id;
-  db.prepare("UPDATE users SET requests_used = 9 WHERE id = ?").run(id);
+  db.prepare("UPDATE users SET requests_used = 2 WHERE id = ?").run(id);
   upstreamQueue = [
     { status: 200, body: `${sseChunk("one")}${sseChunk("", "stop")}data: [DONE]\n\n`, contentType: "text/event-stream" },
     { status: 200, body: `${sseChunk("two")}${sseChunk("", "stop")}data: [DONE]\n\n`, contentType: "text/event-stream" },
@@ -224,7 +224,7 @@ test("concurrent sends cannot all pass the last free request", async () => {
   const statuses = [a.status, b.status].sort();
   assert.deepEqual(statuses, [200, 402]);
   const used = db.prepare("SELECT requests_used FROM users WHERE id = ?").get(id) as { requests_used: number };
-  assert.equal(used.requests_used, 10);
+  assert.equal(used.requests_used, 3);
 });
 
 test("OpenAI route does not charge a non-ok provider response", async () => {
@@ -305,10 +305,33 @@ test("OpenAI stream charges usable completions and releases unusable ones", asyn
   assert.equal(afterEmpty.requests_used, 1);
 });
 
+test("the fourth free request is rejected", async () => {
+  const user = await signup();
+  const id = (db.prepare("SELECT id FROM users WHERE username = ?").get(user.username) as { id: string }).id;
+  upstreamQueue = Array.from({ length: 3 }, () => ({ status: 200, body: `${sseChunk("ok")}${sseChunk("", "stop")}data: [DONE]\n\n`, contentType: "text/event-stream" }));
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const response = await authed(user.cookie, "/api/chat", { method: "POST", body: JSON.stringify({ content: `request ${attempt}` }) });
+    assert.equal(response.status, 200);
+    await response.text();
+  }
+  const fourth = await authed(user.cookie, "/api/chat", { method: "POST", body: JSON.stringify({ content: "request 4" }) });
+  assert.equal(fourth.status, 402);
+  const used = db.prepare("SELECT requests_used FROM users WHERE id = ?").get(id) as { requests_used: number };
+  assert.equal(used.requests_used, 3);
+  const created = await authed(user.cookie, "/api/keys", { method: "POST", body: JSON.stringify({ name: "fourth" }) });
+  const key = await created.json();
+  const api = await fetch(`${base}/v1/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key.secret}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "unabridged", messages: [{ role: "user", content: "request 4" }] }),
+  });
+  assert.equal(api.status, 402);
+});
+
 test("API quota exhaustion uses the web 402 status", async () => {
   const user = await signup();
   const id = (db.prepare("SELECT id FROM users WHERE username = ?").get(user.username) as { id: string }).id;
-  db.prepare("UPDATE users SET requests_used = 10 WHERE id = ?").run(id);
+  db.prepare("UPDATE users SET requests_used = 3 WHERE id = ?").run(id);
   const created = await authed(user.cookie, "/api/keys", { method: "POST", body: JSON.stringify({ name: "quota" }) });
   const key = await created.json();
   const response = await fetch(`${base}/v1/chat/completions`, {

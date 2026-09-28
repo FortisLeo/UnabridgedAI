@@ -12,7 +12,10 @@ process.env.EVM_ACCOUNT_XPUB = "xpub6D4BDPcP2GT577Vvch3R8wDkScZWzQzMMUm3PWbmWvVJ
 
 const transferBlock = 94_600_389;
 const cursorBlock = 94_600_555;
-const headBlock = 94_600_560;
+let headBlock = 94_600_560;
+const freshCursor = 94_590_000;
+const freshHead = 94_600_560;
+const freshTransfer = 94_600_540;
 const txHash = "0x70af819856448c3404ce65a06a7556127ff1194fac853c20fbedc10b6645d85d";
 const blockHash = "0xabc0000000000000000000000000000000000000000000000000000000000001";
 const deposit = "0x3997Ee8610C49c1dABacC865A9dC2A9fbB37Ba70";
@@ -29,22 +32,26 @@ const readBody = (req: IncomingMessage) =>
 
 const hex = (value: number | bigint) => `0x${value.toString(16)}`;
 
+const oneLog = (hash: string, block: number) => ({
+  transactionHash: hash,
+  logIndex: "0x0",
+  blockNumber: hex(block),
+  blockHash,
+  address: contract,
+  topics: [
+    "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+    "0x" + "11".repeat(32),
+    "0x" + deposit.slice(2).padStart(64, "0"),
+  ],
+  data: hex(amount),
+  removed: false,
+});
+
+let phase: "behind" | "head" = "behind";
 const transferLog = (fromBlock: number, toBlock: number) => {
-  if (fromBlock > transferBlock || toBlock < transferBlock) return [];
-  return [{
-    transactionHash: txHash,
-    logIndex: "0x0",
-    blockNumber: hex(transferBlock),
-    blockHash,
-    address: contract,
-    topics: [
-      "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
-      "0x" + "11".repeat(32),
-      "0x" + deposit.slice(2).padStart(64, "0"),
-    ],
-    data: hex(amount),
-    removed: false,
-  }];
+  const block = phase === "behind" ? transferBlock : freshTransfer;
+  const hash = phase === "behind" ? txHash : `${txHash.slice(0, -1)}e`;
+  return fromBlock <= block && toBlock >= block ? [oneLog(hash, block)] : [];
 };
 
 const serve = (fail: boolean) => async (req: IncomingMessage, res: ServerResponse) => {
@@ -69,7 +76,7 @@ const serve = (fail: boolean) => async (req: IncomingMessage, res: ServerRespons
     return send(transferLog(fromBlock, toBlock));
   }
   if (fail && (body.method === "eth_getTransactionReceipt" || body.method === "eth_call")) return reject();
-  if (body.method === "eth_getTransactionReceipt") return send({ status: "0x1", blockHash, blockNumber: hex(transferBlock), logs: [] });
+  if (body.method === "eth_getTransactionReceipt") return send({ status: "0x1", blockHash, logs: [] });
   if (body.method === "eth_call") return send(hex(amount));
   res.writeHead(400).end();
 };
@@ -121,6 +128,20 @@ assert.equal(invoice.status, "succeeded");
 assert.ok(invoice.grant_applied_at);
 assert.equal(user.plan, "pro");
 assert.ok((cursorBlock - transferBlock) > 42);
+
+phase = "head";
+db.prepare("DELETE FROM payment_credits").run();
+db.prepare("UPDATE payment_invoices SET status = 'open', grant_applied_at = NULL, settled_at = NULL WHERE id = '5a1026c7-b1bd-48c1-a1e1-a1289eb88bc6'").run();
+db.prepare("UPDATE users SET plan = 'free' WHERE id = 'payer'").run();
+db.prepare("UPDATE payment_cursors SET height = ? WHERE chain = 'polygon'").run(freshCursor);
+headBlock = freshHead;
+await watchOnceForTests();
+const freshCredit = db.prepare("SELECT settled, height FROM payment_credits WHERE invoice_id = '5a1026c7-b1bd-48c1-a1e1-a1289eb88bc6'").get() as { settled: number; height: number } | undefined;
+const cursor = db.prepare("SELECT height FROM payment_cursors WHERE chain = 'polygon'").get() as { height: number };
+assert.equal(freshCredit?.height, freshTransfer);
+assert.equal(freshCredit?.settled, 1);
+assert.ok(freshHead - freshCursor > 10_000);
+assert.equal(cursor.height, freshHead);
 
 healthy.server.close();
 failing.server.close();
