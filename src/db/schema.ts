@@ -51,6 +51,103 @@ CREATE TABLE IF NOT EXISTS ip_events (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ip_events_lookup ON ip_events (ip, action, created_at);
+CREATE TABLE IF NOT EXISTS payment_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS address_counters (
+  family TEXT PRIMARY KEY,
+  next_index INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS payment_addresses (
+  address TEXT PRIMARY KEY,
+  family TEXT NOT NULL,
+  derivation_index INTEGER NOT NULL,
+  ata TEXT,
+  state TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  UNIQUE (family, derivation_index)
+);
+CREATE TABLE IF NOT EXISTS payment_invoices (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  chain TEXT NOT NULL,
+  asset TEXT NOT NULL,
+  token_contract TEXT,
+  expected_base_units TEXT NOT NULL,
+  address TEXT NOT NULL UNIQUE REFERENCES payment_addresses(address),
+  derivation_index INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  qr_expires_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  settled_at INTEGER,
+  grant_applied_at INTEGER,
+  already_pro INTEGER NOT NULL DEFAULT 0,
+  refund_address TEXT,
+  refund_chain TEXT,
+  refund_requested_at INTEGER,
+  note TEXT,
+  uri TEXT,
+  second_read_ok INTEGER NOT NULL DEFAULT 0,
+  swept_at INTEGER,
+  sweep_tx TEXT
+);
+CREATE INDEX IF NOT EXISTS payment_invoices_user ON payment_invoices (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS payment_invoices_status ON payment_invoices (status, chain);
+CREATE TABLE IF NOT EXISTS payment_sweeps (
+  id TEXT PRIMARY KEY,
+  invoice_id TEXT NOT NULL REFERENCES payment_invoices(id),
+  chain TEXT NOT NULL,
+  asset TEXT NOT NULL,
+  token_contract TEXT NOT NULL,
+  from_address TEXT NOT NULL,
+  derivation_index INTEGER NOT NULL,
+  to_address TEXT NOT NULL,
+  base_units TEXT NOT NULL,
+  nonce INTEGER NOT NULL,
+  gas_price TEXT NOT NULL,
+  gas_limit INTEGER NOT NULL,
+  unsigned_tx TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  broadcast_tx TEXT,
+  broadcast_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS payment_credits (
+  id TEXT PRIMARY KEY,
+  invoice_id TEXT NOT NULL REFERENCES payment_invoices(id),
+  chain TEXT NOT NULL,
+  tx_hash TEXT NOT NULL,
+  output_index INTEGER NOT NULL,
+  output_pubkey TEXT,
+  from_address TEXT,
+  base_units TEXT NOT NULL,
+  height INTEGER NOT NULL,
+  block_hash TEXT,
+  confirmations INTEGER NOT NULL DEFAULT 0,
+  locked INTEGER NOT NULL DEFAULT 0,
+  wrong_asset INTEGER NOT NULL DEFAULT 0,
+  settled INTEGER NOT NULL DEFAULT 0,
+  first_seen_at INTEGER NOT NULL,
+  settled_at INTEGER,
+  disappeared_at INTEGER,
+  credit_key TEXT NOT NULL UNIQUE
+);
+CREATE TABLE IF NOT EXISTS payment_cursors (
+  chain TEXT PRIMARY KEY,
+  height INTEGER NOT NULL,
+  block_hash TEXT,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS payment_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  invoice_id TEXT,
+  user_id TEXT,
+  at INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  detail TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS payment_events_user ON payment_events (user_id, kind, at);
 CREATE TABLE IF NOT EXISTS settings (
   user_id TEXT PRIMARY KEY,
   memory_enabled INTEGER NOT NULL DEFAULT 1,

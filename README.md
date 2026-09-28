@@ -43,6 +43,12 @@ docker compose up --build
 
 Data lives in the `unabridged-data` volume. The app listens on port 3001.
 
+## Crypto invoices
+
+Pro can be bought with USDT or USDC on Ethereum, Polygon, and Solana, or with Monero. Ethereum and Polygon share one account xpub (`EVM_ACCOUNT_XPUB`, path `m/44'/60'/0'/0/i`). Solana uses an indexed list of pre-derived owner public keys (`SOLANA_OWNER_PUBKEYS`) because its derivation path is hardened. Monero uses one view-only `monero-wallet-rpc` on localhost. The web process never holds a spend key.
+
+Each invoice gets a fresh address. The browser polls `GET /api/billing/invoices/:id`. There is no payment webhook. Pro is set only after the exact base-unit amount has settled: the chain `finalized` tag for stablecoins, and 10 confirmations with no future unlock time for Monero. Set the operator price with `tsx scripts/payment-price.ts pro_price_cents 1500`. Leave the price unset and invoice creation returns 503.
+
 
 ## OpenAI-compatible API
 
