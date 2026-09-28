@@ -69,7 +69,7 @@ const agreed = async <T>(calls: Array<Promise<T>>, same: (left: T, right: T) => 
   return { value: values[0] as T, sources: 2 as const };
 };
 
-const EVM_LOG_BATCH = { ethereum: 2_000, polygon: 10 } as const;
+const EVM_LOG_BATCH = { ethereum: 2_000, polygon: Number.MAX_SAFE_INTEGER } as const;
 
 const firstRpc = async <T>(rpcs: JsonRpc[], read: (rpc: JsonRpc) => Promise<T>) => {
   let last: unknown = new Error("no provider");
@@ -84,13 +84,28 @@ const firstRpc = async <T>(rpcs: JsonRpc[], read: (rpc: JsonRpc) => Promise<T>) 
 };
 
 const logsWithFallback = async (rpcs: JsonRpc[], from: number, to: number, contract: string, topics: string[]): Promise<TransferLog[]> => {
-  try {
-    return await firstRpc(rpcs, (rpc) => getTransferLogs(rpc, from, to, contract, topics));
-  } catch (error) {
-    if (!isRangeError(error) || to <= from) throw error;
-    const mid = from + Math.floor((to - from) / 2);
-    return [...(await logsWithFallback(rpcs, from, mid, contract, topics)), ...(await logsWithFallback(rpcs, mid + 1, to, contract, topics))];
+  const attempts = await Promise.allSettled(rpcs.map((rpc) => getTransferLogs(rpc, from, to, contract, topics)));
+  const fulfilled = attempts.find((attempt) => attempt.status === "fulfilled");
+  if (fulfilled?.status === "fulfilled") return fulfilled.value;
+  const reasons = attempts.flatMap((attempt) => (attempt.status === "rejected" ? [attempt.reason] : []));
+  if (!reasons.every((reason) => isRangeError(reason)) || to <= from) throw reasons[0] ?? new Error("no provider");
+  const mid = from + Math.floor((to - from) / 2);
+  return [...(await logsWithFallback(rpcs, from, mid, contract, topics)), ...(await logsWithFallback(rpcs, mid + 1, to, contract, topics))];
+};
+
+/** One pass reaches the agreed head. A provider that refuses the full range keeps the prefix it could return. */
+const scanEnd = async (rpcs: JsonRpc[], from: number, head: number, contract: string, topics: string[]) => {
+  let to = head;
+  while (to > from) {
+    const attempts = await Promise.allSettled(rpcs.map((rpc) => getTransferLogs(rpc, from, to, contract, topics)));
+    if (attempts.some((attempt) => attempt.status === "fulfilled")) return to;
+    const rangeError = attempts.find((attempt) => attempt.status === "rejected" && isRangeError(attempt.reason));
+    if (!rangeError || rangeError.status !== "rejected") return to;
+    const next = from + Math.max(1, Math.floor((to - from) / 2));
+    if (next >= to) throw rangeError.reason;
+    to = next;
   }
+  return to;
 };
 
 type EvmHead = { height: number; hash: string; sources: 1 | 2 };
@@ -122,15 +137,17 @@ const watchEvm = async (chain: "ethereum" | "polygon") => {
     .reduce((lowest, credit) => Math.min(lowest, credit.height), storedCursor);
   const cursor = Math.min(storedCursor, oldestUnsettled);
   const from = Math.max(0, Math.min(cursor, head.height) - EVM_REORG_WINDOW[chain]);
-  const to = Math.min(head.height, Math.max(cursor, from) + EVM_LOG_BATCH[chain]);
-  if (to < from) return;
   const invoices = watchedInvoices().filter((invoice) => invoice.chain === "ethereum" || invoice.chain === "polygon");
   const topics = invoices.map((invoice) => padTopicAddress(invoice.address));
   if (topics.length === 0) return;
   const contracts = [...new Set(invoices.filter((invoice) => invoice.chain === chain).map((invoice) => invoice.token_contract).filter((item): item is string => Boolean(item)))];
+  let to = Math.min(head.height, Math.max(cursor, from) + EVM_LOG_BATCH[chain]);
+  if (to < from) return;
   for (const contract of contracts) {
     for (let start = 0; start < topics.length; start += 20) {
       const chunk = topics.slice(start, start + 20);
+      const reached = await scanEnd(rpcs, from, to, contract, [TRANSFER_TOPIC, ...chunk]);
+      to = Math.min(to, reached);
       const logs = await logsWithFallback(rpcs, from, to, contract, [TRANSFER_TOPIC, ...chunk]);
       for (const log of logs) {
         if (log.removed || log.value <= 0n) continue;
