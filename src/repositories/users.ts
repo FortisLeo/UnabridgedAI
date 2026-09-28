@@ -1,17 +1,20 @@
 import { db } from "../db/client.ts";
 import type { UserRecord } from "./usage.ts";
 
+export const normalizeUsername = (username: string) => username.trim().toLowerCase();
+
 export const insertUser = (id: string, username: string, passwordHash: string, createdAt: number, signupIp: string) =>
-  db.prepare("INSERT INTO users (id, username, password_hash, plan, requests_used, signup_ip, created_at) VALUES (?, ?, ?, 'free', 0, ?, ?)").run(
+  db.prepare("INSERT INTO users (id, username, username_lower, password_hash, plan, requests_used, signup_ip, created_at) VALUES (?, ?, ?, ?, 'free', 0, ?, ?)").run(
     id,
-    username,
+    username.trim(),
+    normalizeUsername(username),
     passwordHash,
     signupIp,
     createdAt,
   );
 
 export const findUserByUsername = (username: string) =>
-  db.prepare("SELECT id, username, password_hash, plan, requests_used FROM users WHERE username = ?").get(username) as
+  db.prepare("SELECT id, username, password_hash, plan, requests_used FROM users WHERE username_lower = ?").get(normalizeUsername(username)) as
     | { id: string; username: string; password_hash: string; plan: string; requests_used: number }
     | undefined;
 

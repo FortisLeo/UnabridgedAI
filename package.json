@@ -6,7 +6,7 @@
     "dev": "tsx watch --clear-screen=false src/index.ts",
     "build": "tsc -p tsconfig.web.json && vite build && tsc --noEmit -p tsconfig.json",
     "start": "NODE_ENV=production tsx src/index.ts",
-    "test": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.web.json"
+    "test": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.web.json && node --import tsx src/audit.regression.ts"
   },
   "engines": {
     "node": ">=20"
@@ -26,9 +26,11 @@
     "@types/better-sqlite3": "^7.6.12",
     "@types/cookie-parser": "^1.4.8",
     "@types/express": "^5.0.3",
+    "@types/jsdom": "^30.0.0",
     "@types/react": "^19.1.2",
-    "@types/react-dom": "^19.1.2",
+    "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^4.4.1",
+    "jsdom": "^30.1.1",
     "typescript": "^5.8.3",
     "vite": "^6.3.5"
   }

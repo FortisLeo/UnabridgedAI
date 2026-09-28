@@ -2,6 +2,12 @@ import { Fragment, useState, type ReactNode } from "react";
 
 const inlinePattern = /(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|\*[^*]+\*|_[^_]+_|\[[^\]]+\]\([^)]+\))/g;
 
+const safeHref = (value: string) => {
+  const trimmed = value.trim();
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return "";
+};
+
 const inline = (text: string, keyPrefix: string): ReactNode[] => {
   const parts = text.split(inlinePattern);
   return parts.map((part, index) => {
@@ -14,7 +20,11 @@ const inline = (text: string, keyPrefix: string): ReactNode[] => {
       return <em key={key}>{part.slice(1, -1)}</em>;
     }
     const link = part.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
-    if (link) return <a key={key} href={link[2]} target="_blank" rel="noreferrer">{link[1]}</a>;
+    if (link) {
+      const href = safeHref(link[2]);
+      if (!href) return <Fragment key={key}>{link[1]}</Fragment>;
+      return <a key={key} href={href} target="_blank" rel="noreferrer noopener">{link[1]}</a>;
+    }
     return <Fragment key={key}>{part}</Fragment>;
   });
 };

@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../../lib/api.ts";
+import { settingsSaves } from "../../lib/settings-saves.ts";
 import { Markdown } from "../../lib/markdown.tsx";
-import { defaultSettings, type ChatSummary, type Message, type Quota, type Settings } from "../../types.ts";
+import { mergeSettingsPatch, type ChatSummary, type Message, type Quota, type Settings } from "../../types.ts";
 import { Paywall } from "../billing/Paywall.tsx";
 
 export function ChatView({
@@ -40,9 +41,12 @@ export function ChatView({
     scroller.current?.scrollTo({ top: scroller.current.scrollHeight });
   }, [messages, busy]);
 
+  const saves = useRef(settingsSaves());
   const persistToggles = async (next: { webSearch?: boolean; darkWebSearch?: boolean }) => {
-    const data = await api<{ settings: Settings }>("/api/settings", { method: "PUT", body: JSON.stringify(next) });
-    setSettings({ ...defaultSettings, ...data.settings });
+    const accepted = saves.current(next);
+    await api("/api/settings", { method: "PUT", body: JSON.stringify(next) });
+    const patch = accepted();
+    setSettings((current) => mergeSettingsPatch(current, patch));
   };
 
   const send = async () => {
@@ -56,9 +60,9 @@ export function ChatView({
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chatId: chatId || undefined, content, webSearch, darkWebSearch }),
+        body: JSON.stringify({ chatId: settings.temporaryChat || !settings.saveHistory ? undefined : chatId || undefined, content, webSearch, darkWebSearch }),
       });
-      if (!response.ok) {
+      if (!response.ok || !response.body || !response.headers.get("content-type")?.includes("text/event-stream")) {
         const payload = await response.json().catch(() => ({} as Record<string, unknown>));
         throw new ApiError(
           typeof payload.error === "string" ? payload.error : `Request failed (${response.status})`,
@@ -66,7 +70,6 @@ export function ChatView({
           payload,
         );
       }
-      if (!response.body) throw new Error("The channel dropped before a reply came back.");
 
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
@@ -124,10 +127,13 @@ export function ChatView({
         setMessages((current) => {
           const copy = [...current];
           const last = copy[copy.length - 1];
-          if (last?.role === "assistant" && !last.content) {
-            copy[copy.length - 1] = { role: "assistant", content: `channel error: ${(error as Error).message}` };
+          const note = `channel error: ${(error as Error).message}`;
+          if (last?.role === "assistant" && last.content) {
+            copy[copy.length - 1] = { ...last, content: `${last.content}\n\n${note}` };
+          } else if (last?.role === "assistant") {
+            copy[copy.length - 1] = { role: "assistant", content: note };
           } else {
-            copy.push({ role: "assistant", content: `channel error: ${(error as Error).message}` });
+            copy.push({ role: "assistant", content: note });
           }
           return copy;
         });

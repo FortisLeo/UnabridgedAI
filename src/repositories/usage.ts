@@ -13,8 +13,20 @@ export type UserRecord = {
 export const getUserUsage = (userId: string) =>
   db.prepare("SELECT id, username, plan, requests_used, signup_ip, created_at FROM users WHERE id = ?").get(userId) as UserRecord | undefined;
 
-export const incrementRequests = (userId: string) =>
-  db.prepare("UPDATE users SET requests_used = requests_used + 1 WHERE id = ?").run(userId);
+/**
+ * Claim one free request, or a pro request, in the same write that decides the paywall.
+ * changes === 0 means a free account was already at the cap.
+ */
+export const claimRequest = (userId: string) => {
+  const result = db
+    .prepare("UPDATE users SET requests_used = requests_used + 1 WHERE id = ? AND (plan = 'pro' OR requests_used < ?)")
+    .run(userId, FREE_REQUEST_LIMIT);
+  return result.changes > 0;
+};
+
+export const releaseRequest = (userId: string) => {
+  db.prepare("UPDATE users SET requests_used = CASE WHEN requests_used > 0 THEN requests_used - 1 ELSE 0 END WHERE id = ?").run(userId);
+};
 
 export const quotaFor = (user: Pick<UserRecord, "plan" | "requests_used">) => {
   const pro = user.plan === "pro";
@@ -26,5 +38,3 @@ export const quotaFor = (user: Pick<UserRecord, "plan" | "requests_used">) => {
   };
 };
 
-export const hasFreeQuota = (user: Pick<UserRecord, "plan" | "requests_used">) =>
-  user.plan === "pro" || user.requests_used < FREE_REQUEST_LIMIT;

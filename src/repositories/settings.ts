@@ -46,19 +46,9 @@ export const getSettings = (userId: string) => {
   return created;
 };
 
-export const updateSettings = (userId: string, next: Omit<SettingsRow, "user_id">) => {
-  db.prepare(
-    `UPDATE settings SET memory_enabled=?, memory=?, custom_instructions=?, web_search=?, dark_web_search=?, temporary_chat=?, save_history=?, model=?, theme=? WHERE user_id=?`,
-  ).run(
-    next.memory_enabled,
-    next.memory,
-    next.custom_instructions,
-    next.web_search,
-    next.dark_web_search,
-    next.temporary_chat,
-    next.save_history,
-    next.model,
-    next.theme,
-    userId,
-  );
+export const updateSettings = (userId: string, patch: Partial<Omit<SettingsRow, "user_id">>) => {
+  const fields = Object.keys(patch) as Array<keyof Omit<SettingsRow, "user_id">>;
+  if (!fields.length) return;
+  const values = fields.map((field) => patch[field]);
+  db.prepare(`UPDATE settings SET ${fields.map((field) => `${field}=?`).join(", ")} WHERE user_id=?`).run(...values, userId);
 };
