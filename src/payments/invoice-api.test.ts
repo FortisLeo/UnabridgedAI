@@ -27,7 +27,7 @@ try {
   });
   assert.equal(signup.status, 200);
   await signup.json();
-  const cookie = signup.headers.get("set-cookie")?.split(";")[0];
+  const cookie = signup.headers.getSetCookie().map((value) => value.split(";")[0]).find((value) => value.startsWith("unabridged_session="));
   assert.ok(cookie);
   const created = await fetch(`${base}/billing/invoices`, {
     method: "POST",

@@ -70,4 +70,4 @@ print(client.chat.completions.create(
 ).choices[0].message.content)
 ```
 
-The UnabridgedAI system prompt is always prepended. Extra `system` messages from the client are additional instructions. Streaming and tool calls pass through.
+The UnabridgedAI system prompt is always prepended. Extra `system` messages from the client are additional instructions. Streaming and tool calls pass through. API keys authorize `/v1` only; the web app uses the session cookie.

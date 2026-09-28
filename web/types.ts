@@ -54,6 +54,8 @@ export type ApiKey = {
   revoked_at: number | null;
 };
 
+export const mergeSettingsPatch = (current: Settings, patch: Partial<Settings>): Settings => ({ ...current, ...patch });
+
 export const defaultSettings: Settings = {
   memoryEnabled: true,
   memory: "",

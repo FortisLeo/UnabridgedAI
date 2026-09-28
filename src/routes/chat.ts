@@ -3,15 +3,21 @@ import { z } from "zod";
 import { randomUUID } from "../lib/crypto.ts";
 import { publicError } from "../lib/errors.ts";
 import { titleFrom } from "../lib/http.ts";
-import { createChat, insertMessage, listHistory, ownedChat, touchChat } from "../repositories/chats.ts";
+import { chatGuard } from "../middleware/security.ts";
+import { listHistory, ownedChat, persistTurn } from "../repositories/chats.ts";
 import { getSettings } from "../repositories/settings.ts";
-import { getUserUsage, hasFreeQuota, incrementRequests, quotaFor } from "../repositories/usage.ts";
+import { claimRequest, getUserUsage, quotaFor, releaseRequest } from "../repositories/usage.ts";
 import { streamChat } from "../services/llm.ts";
 import { collectSources } from "../services/search.ts";
 import { userIdOf } from "../types.ts";
-import { chatGuard } from "../middleware/security.ts";
 
 export const chatRouter = Router();
+
+const paywall = (userId: string) => ({
+  error: "Free limit reached. Upgrade to Pro to keep chatting.",
+  code: "PAYWALL",
+  quota: quotaFor(getUserUsage(userId)!),
+});
 
 chatRouter.post("/", chatGuard, async (req, res) => {
   const parsed = z
@@ -27,29 +33,44 @@ chatRouter.post("/", chatGuard, async (req, res) => {
   const userId = userIdOf(req);
   const user = getUserUsage(userId);
   if (!user) return res.status(401).json({ error: "Sign in required" });
-  if (!hasFreeQuota(user)) {
-    return res.status(402).json({
-      error: "Free limit reached. Upgrade to Pro to keep chatting.",
-      code: "PAYWALL",
-      quota: quotaFor(user),
-    });
-  }
 
   const settings = getSettings(userId);
   const persist = Boolean(settings.save_history) && !settings.temporary_chat;
-  let chatId = parsed.data.chatId;
-  if (persist) {
-    if (chatId) {
-      if (!ownedChat(userId, chatId)) return res.status(404).json({ error: "Chat not found" });
-    } else {
-      chatId = randomUUID();
-      const now = Date.now();
-      createChat(chatId, userId, titleFrom(parsed.data.content), now);
-    }
+  const requestedId = parsed.data.chatId ?? null;
+  if (persist && requestedId && !ownedChat(userId, requestedId)) {
+    return res.status(404).json({ error: "Chat not found" });
   }
 
-  const history = chatId ? listHistory(chatId) : [];
-  const sources = await collectSources(parsed.data.content, Boolean(parsed.data.webSearch), Boolean(parsed.data.darkWebSearch));
+  // Claim before the provider call so concurrent sends cannot all pass a stale read.
+  if (!claimRequest(userId)) return res.status(402).json(paywall(userId));
+
+  const history = persist && requestedId ? listHistory(requestedId) : [];
+  let sources: Awaited<ReturnType<typeof collectSources>> = [];
+  try {
+    sources = await collectSources(parsed.data.content, Boolean(parsed.data.webSearch), Boolean(parsed.data.darkWebSearch));
+  } catch {
+    releaseRequest(userId);
+    return res.status(502).json({ error: publicError(502) });
+  }
+
+  // Open the provider before SSE headers so a rejection is a real HTTP error, not 200 + event: error.
+  const iterator = streamChat(settings, history, parsed.data.content, sources);
+  let first: IteratorResult<string>;
+  try {
+    first = await iterator.next();
+    let prefix = "";
+    while (!first.done && !first.value.trim()) {
+      prefix += first.value;
+      first = await iterator.next();
+    }
+    if (first.done) throw Object.assign(new Error(publicError(502)), { status: 502 });
+    first.value = prefix + first.value;
+  } catch (error) {
+    releaseRequest(userId);
+    const status = typeof error === "object" && error && "status" in error ? Number((error as { status: number }).status) : 502;
+    const code = status >= 400 && status < 600 ? status : 502;
+    return res.status(code).json({ error: error instanceof Error ? error.message : publicError(code) });
+  }
 
   res.status(200);
   res.setHeader("Content-Type", "text/event-stream");
@@ -62,20 +83,36 @@ chatRouter.post("/", chatGuard, async (req, res) => {
     if (!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   };
 
+  let reply = "";
   try {
     if (sources.length) send("sources", { sources });
-    let reply = "";
-    for await (const chunk of streamChat(settings, history, parsed.data.content, sources)) {
-      reply += chunk;
-      send("delta", { text: chunk });
+    if (!first.done && first.value) {
+      reply += first.value;
+      send("delta", { text: first.value });
+    }
+    while (true) {
+      const next = await iterator.next();
+      if (next.done) break;
+      if (!next.value) continue;
+      reply += next.value;
+      send("delta", { text: next.value });
     }
     if (!reply.trim()) throw Object.assign(new Error(publicError(502)), { status: 502 });
-    incrementRequests(userId);
+
+    const chatId = persist ? (requestedId ?? randomUUID()) : null;
     const now = Date.now();
     if (persist && chatId) {
-      insertMessage(randomUUID(), chatId, "user", parsed.data.content, null, now);
-      insertMessage(randomUUID(), chatId, "assistant", reply, JSON.stringify(sources), now + 1);
-      touchChat(chatId, now + 1);
+      persistTurn(
+        chatId,
+        userId,
+        titleFrom(parsed.data.content),
+        parsed.data.content,
+        reply,
+        JSON.stringify(sources),
+        now,
+        randomUUID(),
+        randomUUID(),
+      );
     }
     const next = getUserUsage(userId)!;
     send("done", {
@@ -86,6 +123,7 @@ chatRouter.post("/", chatGuard, async (req, res) => {
     });
     res.end();
   } catch (error) {
+    releaseRequest(userId);
     if (res.writableEnded) return;
     const status = typeof error === "object" && error && "status" in error ? Number((error as { status: number }).status) : 502;
     send("error", { error: error instanceof Error ? error.message : publicError(status) });

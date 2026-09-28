@@ -1,6 +1,9 @@
 import cookieParser from "cookie-parser";
 import express from "express";
 import helmet from "helmet";
+import { db } from "./db/client.ts";
+import { publicError } from "./lib/errors.ts";
+import { trustProxySetting } from "./lib/ip.ts";
 import { apiKeyAuth, auth } from "./middleware/auth.ts";
 import { blockBlacklistedIp } from "./middleware/security.ts";
 import { authRouter } from "./routes/auth.ts";
@@ -23,11 +26,24 @@ const corsV1 = (req: express.Request, res: express.Response, next: express.NextF
 
 export const createApp = () => {
   const app = express();
-  app.set("trust proxy", true);
+  app.set("trust proxy", trustProxySetting());
   app.use(helmet({ contentSecurityPolicy: false, hsts: false, crossOriginResourcePolicy: false, crossOriginOpenerPolicy: false }));
   app.use(express.json({ limit: "2mb" }));
+  app.use((error: unknown, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (error && typeof error === "object" && "type" in error && (error as { type?: string }).type === "entity.parse.failed") {
+      return res.status(400).json({ error: "Invalid JSON" });
+    }
+    next(error);
+  });
   app.use(cookieParser());
-  app.get("/api/health", (_req, res) => res.json({ ok: true }));
+  app.get("/api/health", (_req, res) => {
+    try {
+      db.prepare("SELECT 1 AS ok").get();
+      res.json({ ok: true, db: true });
+    } catch {
+      res.status(503).json({ ok: false, db: false });
+    }
+  });
   app.use("/api", (_req, res, next) => {
     res.setHeader("Cache-Control", "no-store");
     next();
@@ -49,5 +65,8 @@ export const createApp = () => {
 };
 
 export const errorHandler = (error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  res.status(500).json({ error: error instanceof Error ? error.message : "Something went wrong" });
+  if (res.headersSent) return;
+  const status = typeof error === "object" && error && "status" in error ? Number((error as { status: number }).status) : 500;
+  const code = status >= 400 && status < 600 ? status : 500;
+  res.status(code).json({ error: publicError(code) });
 };

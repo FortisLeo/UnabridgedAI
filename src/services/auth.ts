@@ -9,10 +9,7 @@ const isIpHost = (host: string) => {
   return /^\d{1,3}(?:\.\d{1,3}){3}$/.test(value) || value.includes(":");
 };
 
-const requestHttps = (req?: Request) => {
-  const proto = (req?.get("x-forwarded-proto") ?? req?.protocol ?? "").split(",")[0].trim().toLowerCase();
-  return proto === "https" || Boolean(req?.secure);
-};
+const requestHttps = (req?: Request) => Boolean(req?.secure);
 
 export const sessionCookie = (req?: Request): CookieOptions => {
   const host = (req?.hostname ?? "").trim();
@@ -31,7 +28,9 @@ export const signIn = (res: Response, id: string, username: string, req?: Reques
   const sid = randomToken();
   insertSession(hash(sid), id, Date.now() + 1000 * 60 * 60 * 24 * 30);
   getSettings(id);
-  res.cookie("unabridged_session", sid, sessionCookie(req));
+  const options = sessionCookie(req);
+  res.clearCookie("n4n1_session", { ...options, maxAge: 0 });
+  res.cookie("unabridged_session", sid, options);
   const usage = getUserUsage(id);
   return res.json({
     user: { id, username, plan: usage?.plan ?? "free" },

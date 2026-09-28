@@ -6,9 +6,9 @@ import { startPaymentWatchers, stopPaymentWatchers } from "./payments/watch.ts";
 import { attachUi } from "./ui.ts";
 
 const app = createApp();
+app.use(errorHandler);
 const server = createServer(app);
 const closeUi = await attachUi(app, server);
-app.use(errorHandler);
 
 server.listen(env.port, () => {
   const mode = isProduction ? "UI" : "Vite HMR";
