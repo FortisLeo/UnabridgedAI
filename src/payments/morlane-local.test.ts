@@ -92,12 +92,13 @@ assert.equal(forged.status, 401);
 assert.equal((db.prepare("SELECT plan FROM users WHERE username = 'checkout_user'").get() as { plan: string }).plan, "free");
 
 const body = JSON.stringify({ invoiceId: checkout.id, status: "succeeded" });
+const signedAt = Date.now();
 const signed = await fetch(`${base}/billing/webhooks/payment`, {
   method: "POST",
   headers: {
     "content-type": "application/json",
-    "x-payment-timestamp": "1000",
-    "x-payment-signature": signWebhook("endpoint-secret", body, 1000),
+    "x-payment-timestamp": String(signedAt),
+    "x-payment-signature": signWebhook("endpoint-secret", body, signedAt),
   },
   body,
 });

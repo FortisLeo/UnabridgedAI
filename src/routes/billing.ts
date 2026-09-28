@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import { Router } from "express";
 import { z } from "zod";
 import { getUserUsage, quotaFor } from "../repositories/usage.ts";
@@ -44,8 +45,10 @@ billingRouter.post("/webhooks/payment", (req, res) => {
   const raw = JSON.stringify(req.body ?? {});
   const timestamp = String(req.header("x-payment-timestamp") ?? "");
   const signature = String(req.header("x-payment-signature") ?? "");
-  const endpoint = db.prepare("SELECT secret FROM payment_webhook_endpoints LIMIT 1").get() as { secret: string } | undefined;
-  if (!endpoint || !webhookSignatureValid(endpoint.secret, raw, timestamp, signature)) {
+  const endpoint = db.prepare("SELECT secret FROM payment_webhook_endpoints WHERE url = ?").get(process.env.PAYMENT_WEBHOOK_URL?.trim() ?? "") as { secret: string } | undefined;
+  const secret = process.env.PAYMENT_WEBHOOK_SECRET?.trim() ?? "";
+  const matchesStored = endpoint && (endpoint.secret === secret || endpoint.secret === `sha256:${createHmac("sha256", "payment-webhook").update(secret).digest("hex")}`);
+  if (!matchesStored || !webhookSignatureValid(secret, raw, timestamp, signature)) {
     return res.status(401).json({ error: "Invalid webhook signature" });
   }
   const hint = acceptWebhookHint(raw);

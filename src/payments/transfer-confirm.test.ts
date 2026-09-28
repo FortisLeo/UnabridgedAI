@@ -9,13 +9,24 @@ process.env.DB_PATH = join(mkdtempSync(join(tmpdir(), "uai-transfer-")), "test.d
 process.env.PAYMENT_WATCH_MS = "0";
 const cold = "0x2222222222222222222222222222222222222222";
 const token = "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359";
-let destination = 0n;
+let includeLog = false;
 const rpc = createServer((req, res) => {
   const chunks: Buffer[] = [];
   req.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
   req.on("end", () => {
     const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { method: string };
-    const result = body.method === "eth_call" ? `0x${destination.toString(16)}` : "0x89";
+    const log = {
+      address: token,
+      topics: ["0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef", "0x" + "11".repeat(32), "0x" + cold.slice(2).padStart(64, "0")],
+      data: "0x" + (10_000).toString(16).padStart(64, "0"),
+      logIndex: "0x0",
+      blockNumber: "0x10",
+      blockHash: "0x" + "ab".repeat(32),
+      transactionHash: "0x" + "cd".repeat(32),
+    };
+    const result = body.method === "eth_getTransactionReceipt"
+      ? (includeLog ? { status: "0x1", blockHash: log.blockHash, blockNumber: "0x10", logs: [log] } : null)
+      : "0x89";
     res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
   });
 });
@@ -38,7 +49,7 @@ db.prepare("INSERT INTO payment_invoices (id, user_id, chain, asset, token_contr
 db.prepare("INSERT INTO payment_transfers (id, invoice_id, chain, status, to_address, base_units, tx_hash, created_at, updated_at) VALUES ('transfer-1', 'paid', 'polygon', 'broadcast', ?, '10000', '0xabc', 1, 1)").run(cold);
 
 await assert.rejects(() => confirmTransfer("transfer-1", 2), (error: unknown) => error instanceof TransferError && error.code === "confirmation_pending");
-destination = 10_000n;
+includeLog = true;
 const confirmed = await confirmTransfer("transfer-1", 3);
 assert.equal(confirmed.status, "confirmed");
 assert.equal((db.prepare("SELECT state FROM payment_addresses WHERE derivation_index = 9").get() as { state: string }).state, "swept");

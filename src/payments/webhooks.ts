@@ -5,13 +5,16 @@ import { randomUUID } from "../lib/crypto.ts";
 import { getInvoice } from "./store.ts";
 
 export const WEBHOOK_RETRY_MS = 10 * 60 * 1000;
+export const WEBHOOK_TOLERANCE_MS = 5 * 60 * 1000;
 
 export const signWebhook = (secret: string, body: string, timestamp: number) =>
   createHmac("sha256", secret).update(`${timestamp}.${body}`).digest("hex");
 
-export const webhookSignatureValid = (secret: string, body: string, timestamp: string, signature: string) => {
+export const webhookSignatureValid = (secret: string, body: string, timestamp: string, signature: string, now = Date.now()) => {
   if (!/^[0-9]+$/.test(timestamp) || !/^[0-9a-f]{64}$/.test(signature)) return false;
-  const expected = signWebhook(secret, body, Number(timestamp));
+  const sentAt = Number(timestamp);
+  if (Math.abs(now - sentAt) > WEBHOOK_TOLERANCE_MS) return false;
+  const expected = signWebhook(secret, body, sentAt);
   const left = Buffer.from(expected);
   const right = Buffer.from(signature);
   return left.length === right.length && timingSafeEqual(left, right);
@@ -27,13 +30,14 @@ const ensureEndpoint = (now: number) => {
   if (!configured.url || !configured.secret) return null;
   const existing = db.prepare("SELECT id, secret FROM payment_webhook_endpoints WHERE url = ?").get(configured.url) as { id: string; secret: string } | undefined;
   if (existing) {
-    if (existing.secret !== configured.secret) {
-      db.prepare("UPDATE payment_webhook_endpoints SET secret = ? WHERE id = ?").run(configured.secret, existing.id);
+    const stored = `sha256:${createHmac("sha256", "payment-webhook").update(configured.secret).digest("hex")}`;
+    if (existing.secret !== stored && existing.secret !== configured.secret) {
+      db.prepare("UPDATE payment_webhook_endpoints SET secret = ? WHERE id = ?").run(stored, existing.id);
     }
     return existing.id;
   }
   const id = randomUUID();
-  db.prepare("INSERT INTO payment_webhook_endpoints (id, url, secret, created_at) VALUES (?, ?, ?, ?)").run(id, configured.url, configured.secret, now);
+  db.prepare("INSERT INTO payment_webhook_endpoints (id, url, secret, created_at) VALUES (?, ?, ?, ?)").run(id, configured.url, `sha256:${createHmac("sha256", "payment-webhook").update(configured.secret).digest("hex")}`, now);
   return id;
 };
 
@@ -81,6 +85,12 @@ export const recordWebhookAttempt = (deliveryId: string, status: number | null, 
   db.prepare("UPDATE payment_webhook_deliveries SET next_attempt_at = ? WHERE id = ?").run(now + WEBHOOK_RETRY_MS, deliveryId);
 };
 
+const signingSecret = (stored: string) => {
+  const configured = webhookConfig().secret;
+  const hashed = `sha256:${createHmac("sha256", "payment-webhook").update(configured).digest("hex")}`;
+  return stored === hashed || stored === configured ? configured : stored;
+};
+
 export const deliverDueWebhooks = async (now = Date.now()) => {
   for (const delivery of dueWebhookDeliveries(now)) {
     const timestamp = String(now);
@@ -90,7 +100,7 @@ export const deliverDueWebhooks = async (now = Date.now()) => {
         headers: {
           "content-type": "application/json",
           "x-payment-timestamp": timestamp,
-          "x-payment-signature": signWebhook(delivery.secret, delivery.body, now),
+          "x-payment-signature": signWebhook(signingSecret(delivery.secret), delivery.body, now),
         },
         body: delivery.body,
       });

@@ -2,7 +2,7 @@ import { db } from "../db/client.ts";
 import { env } from "../lib/env.ts";
 import { randomUUID } from "../lib/crypto.ts";
 import { chainIdOf } from "./allowlist.ts";
-import { balanceOf, createJsonRpc, evmChainId, type JsonRpc } from "./chain.ts";
+import { createJsonRpc, evmChainId, getReceipt, type JsonRpc } from "./chain.ts";
 import { planSweeps, type SweepPlan } from "./evm-sweep.ts";
 
 export class TransferError extends Error {
@@ -127,11 +127,16 @@ export const confirmTransfer = async (id: string, now = Date.now()) => {
   const row = db.prepare("SELECT * FROM payment_transfers WHERE id = ?").get(id) as TransferRow | undefined;
   if (!row?.tx_hash) throw new TransferError("confirmation_pending", "Transfer has not been broadcast");
   const chain = row.chain === "ethereum" ? "ethereum" : "polygon";
-  const invoice = db.prepare("SELECT token_contract FROM payment_invoices WHERE id = ?").get(row.invoice_id) as { token_contract: string };
-  const balance = await balanceOf(rpcFor(chain), invoice.token_contract, row.to_address);
-  if (balance < BigInt(row.base_units)) throw new TransferError("confirmation_pending", "Destination balance does not show the transfer yet");
+  const invoice = db.prepare("SELECT token_contract, address FROM payment_invoices WHERE id = ?").get(row.invoice_id) as { token_contract: string; address: string };
+  const receipt = await getReceipt(rpcFor(chain), row.tx_hash);
+  const moved = receipt?.status
+    ? receipt.logs
+        .filter((log) => log.contract === invoice.token_contract.toLowerCase() && log.to === row.to_address.toLowerCase())
+        .reduce((sum, log) => sum + log.value, 0n)
+    : 0n;
+  if (!receipt?.status || moved < BigInt(row.base_units)) throw new TransferError("confirmation_pending", "The transfer receipt does not show the token arriving at the cold address");
   db.prepare("UPDATE payment_transfers SET status = 'confirmed', updated_at = ? WHERE id = ?").run(now, id);
   db.prepare("UPDATE payment_invoices SET swept_at = COALESCE(swept_at, ?), sweep_tx = COALESCE(sweep_tx, ?) WHERE id = ?").run(now, row.tx_hash, row.invoice_id);
-  db.prepare("UPDATE payment_addresses SET state = 'swept' WHERE address = (SELECT address FROM payment_invoices WHERE id = ?)").run(row.invoice_id);
-  return { id, status: "confirmed", destinationBalance: balance.toString() };
+  db.prepare("UPDATE payment_addresses SET state = 'swept' WHERE address = ?").run(invoice.address);
+  return { id, status: "confirmed", receivedBaseUnits: moved.toString() };
 };
