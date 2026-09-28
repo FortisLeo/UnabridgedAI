@@ -47,6 +47,7 @@ export type CreditRow = {
   first_seen_at: number;
   settled_at: number | null;
   disappeared_at: number | null;
+  confirmed_at: number | null;
 };
 
 const OPEN_FOR_CREATE = ["open", "underpaid", "exact_pending", "overpaid"];
@@ -121,6 +122,9 @@ export const getInvoice = (id: string) => db.prepare("SELECT * FROM payment_invo
 export const creditsFor = (invoiceId: string) =>
   db.prepare("SELECT * FROM payment_credits WHERE invoice_id = ? ORDER BY first_seen_at ASC").all(invoiceId) as CreditRow[];
 
+export const creditsForChain = (chain: string) =>
+  db.prepare("SELECT * FROM payment_credits WHERE chain = ? AND disappeared_at IS NULL").all(chain) as CreditRow[];
+
 export const watchedInvoices = () =>
   db
     .prepare("SELECT * FROM payment_invoices WHERE status NOT IN ('refunded') AND (status != 'succeeded' OR grant_applied_at IS NULL)")
@@ -128,21 +132,21 @@ export const watchedInvoices = () =>
 
 const creditKey = (chain: string, txHash: string, outputIndex: number, pubkey: string | null) => `${chain}:${txHash}:${outputIndex}:${pubkey ?? ""}`;
 
-export const upsertCredit = (credit: Omit<CreditRow, "id" | "first_seen_at" | "settled_at" | "disappeared_at"> & { now: number }) => {
+export const upsertCredit = (credit: Omit<CreditRow, "id" | "first_seen_at" | "settled_at" | "disappeared_at" | "confirmed_at"> & { now: number; receiptConfirmed: boolean }) => {
   const key = creditKey(credit.chain, credit.tx_hash, credit.output_index, credit.output_pubkey);
   const existing = db.prepare("SELECT id FROM payment_credits WHERE credit_key = ?").get(key) as { id: string } | undefined;
   if (existing) {
     db.prepare(
-      "UPDATE payment_credits SET confirmations = ?, locked = ?, wrong_asset = ?, settled = ?, settled_at = CASE WHEN ? = 1 THEN COALESCE(settled_at, ?) ELSE settled_at END, disappeared_at = NULL, height = ?, block_hash = ? WHERE id = ?",
-    ).run(credit.confirmations, credit.locked, credit.wrong_asset, credit.settled, credit.settled, credit.now, credit.height, credit.block_hash, existing.id);
+      "UPDATE payment_credits SET confirmations = ?, locked = ?, wrong_asset = ?, settled = ?, settled_at = CASE WHEN ? = 1 THEN COALESCE(settled_at, ?) ELSE settled_at END, confirmed_at = COALESCE(confirmed_at, ?), disappeared_at = NULL, height = ?, block_hash = ? WHERE id = ?",
+    ).run(credit.confirmations, credit.locked, credit.wrong_asset, credit.settled, credit.settled, credit.now, credit.receiptConfirmed ? credit.now : null, credit.height, credit.block_hash, existing.id);
     return existing.id;
   }
   const id = randomUUID();
   db.prepare(
     `INSERT INTO payment_credits (
       id, invoice_id, chain, tx_hash, output_index, output_pubkey, from_address, base_units, height, block_hash,
-      confirmations, locked, wrong_asset, settled, first_seen_at, settled_at, credit_key
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      confirmations, locked, wrong_asset, settled, first_seen_at, settled_at, confirmed_at, credit_key
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     credit.invoice_id,
@@ -160,6 +164,7 @@ export const upsertCredit = (credit: Omit<CreditRow, "id" | "first_seen_at" | "s
     credit.settled,
     credit.now,
     credit.settled ? credit.now : null,
+    credit.receiptConfirmed ? credit.now : null,
     key,
   );
   return id;

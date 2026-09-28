@@ -68,6 +68,7 @@ const credit = {
   first_seen_at: 100,
   settled_at: 100,
   disappeared_at: null,
+  confirmed_at: 100,
 };
 
 assert.equal(classify(invoice, [{ ...credit, first_seen_at: 2_000 }], 2_000, true), "exact_pending");
