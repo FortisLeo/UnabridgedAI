@@ -140,6 +140,29 @@ CREATE TABLE IF NOT EXISTS payment_cursors (
   block_hash TEXT,
   updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS payment_webhook_endpoints (
+  id TEXT PRIMARY KEY,
+  url TEXT NOT NULL,
+  secret TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS payment_webhook_deliveries (
+  id TEXT PRIMARY KEY,
+  endpoint_id TEXT NOT NULL REFERENCES payment_webhook_endpoints(id),
+  invoice_id TEXT NOT NULL,
+  event TEXT NOT NULL,
+  body TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  next_attempt_at INTEGER NOT NULL,
+  delivered_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS payment_webhook_attempts (
+  id TEXT PRIMARY KEY,
+  delivery_id TEXT NOT NULL REFERENCES payment_webhook_deliveries(id),
+  at INTEGER NOT NULL,
+  status INTEGER,
+  error TEXT
+);
 CREATE TABLE IF NOT EXISTS payment_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   invoice_id TEXT,

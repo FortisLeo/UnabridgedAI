@@ -6,6 +6,9 @@ import { auth } from "../middleware/auth.ts";
 import { invoiceCreateGuard } from "../middleware/security.ts";
 import { resolvePair } from "../payments/allowlist.ts";
 import { createInvoice, InvoiceError, readInvoice, resumeInvoice, submitRefundAddress } from "../payments/invoices.ts";
+import { acceptWebhookHint, webhookSignatureValid } from "../payments/webhooks.ts";
+import { broadcastTransfer, confirmTransfer, prepareTransferGas, TransferError } from "../payments/transfers.ts";
+import { db } from "../db/client.ts";
 
 export const billingRouter = Router();
 
@@ -35,6 +38,47 @@ billingRouter.get("/invoices/:id", auth, (req, res) => {
   const invoice = readInvoice(userIdOf(req), id ?? "");
   if (!invoice) return res.status(404).json({ error: "Invoice not found" });
   res.json(invoice);
+});
+
+billingRouter.post("/webhooks/payment", (req, res) => {
+  const raw = JSON.stringify(req.body ?? {});
+  const timestamp = String(req.header("x-payment-timestamp") ?? "");
+  const signature = String(req.header("x-payment-signature") ?? "");
+  const endpoint = db.prepare("SELECT secret FROM payment_webhook_endpoints LIMIT 1").get() as { secret: string } | undefined;
+  if (!endpoint || !webhookSignatureValid(endpoint.secret, raw, timestamp, signature)) {
+    return res.status(401).json({ error: "Invalid webhook signature" });
+  }
+  const hint = acceptWebhookHint(raw);
+  return res.json(hint);
+});
+
+billingRouter.post("/transfers/:chain/gas", auth, async (req, res) => {
+  const chain = req.params.chain;
+  if (chain !== "polygon" && chain !== "ethereum") return res.status(400).json({ error: "That chain is not supported." });
+  try {
+    return res.json({ transfers: await prepareTransferGas(chain) });
+  } catch (error) {
+    if (error instanceof TransferError) return res.status(409).json({ error: error.message, code: error.code });
+    return res.status(503).json({ error: "Payments are not available." });
+  }
+});
+
+billingRouter.post("/transfers/:id/broadcast", auth, async (req, res) => {
+  try {
+    return res.json(await broadcastTransfer(String(req.params.id)));
+  } catch (error) {
+    if (error instanceof TransferError) return res.status(409).json({ error: error.message, code: error.code });
+    return res.status(503).json({ error: "Payments are not available." });
+  }
+});
+
+billingRouter.post("/transfers/:id/confirm", auth, async (req, res) => {
+  try {
+    return res.json(await confirmTransfer(String(req.params.id)));
+  } catch (error) {
+    if (error instanceof TransferError) return res.status(409).json({ error: error.message, code: error.code });
+    return res.status(503).json({ error: "Payments are not available." });
+  }
 });
 
 billingRouter.post("/invoices/:id/refund-address", auth, (req, res) => {
