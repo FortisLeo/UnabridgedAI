@@ -38,6 +38,8 @@ db.exec("DROP TABLE IF EXISTS payments");
 // Rate-limit counters on loopback were a local-dev lockout, not a block list.
 // Blacklist rows stay: a private address can be blocked on purpose.
 db.exec("INSERT OR IGNORE INTO address_counters (family, next_index) VALUES ('evm', 0), ('solana', 0), ('monero', 1)");
+const creditColumns = db.prepare("PRAGMA table_info(payment_credits)").all() as Array<{ name: string }>;
+if (!creditColumns.some((column) => column.name === "confirmed_at")) db.exec("ALTER TABLE payment_credits ADD COLUMN confirmed_at INTEGER");
 const invoiceColumns = db.prepare("PRAGMA table_info(payment_invoices)").all() as Array<{ name: string }>;
 if (!invoiceColumns.some((column) => column.name === "swept_at")) db.exec("ALTER TABLE payment_invoices ADD COLUMN swept_at INTEGER");
 if (!invoiceColumns.some((column) => column.name === "sweep_tx")) db.exec("ALTER TABLE payment_invoices ADD COLUMN sweep_tx TEXT");

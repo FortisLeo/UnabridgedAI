@@ -131,6 +131,7 @@ CREATE TABLE IF NOT EXISTS payment_credits (
   first_seen_at INTEGER NOT NULL,
   settled_at INTEGER,
   disappeared_at INTEGER,
+  confirmed_at INTEGER,
   credit_key TEXT NOT NULL UNIQUE
 );
 CREATE TABLE IF NOT EXISTS payment_cursors (

@@ -5,7 +5,7 @@ import { formatBaseUnits } from "./amounts.ts";
 import { balanceOf, blockHeader, createJsonRpc, evmChainId, finalizedHead, getReceipt, getTransferLogs, isRangeError, solanaSignatures, solanaSlot, solanaTokenDeltas, usdtFee, type JsonRpc, type TransferLog } from "./chain.ts";
 import { padTopicAddress } from "./evm-address.ts";
 import { applySettlement } from "./settle.ts";
-import { ataOf, creditsFor, cursorOf, evmAddresses, invoiceByAddress, markMissing, saveCursor, upsertCredit, watchedInvoices, type InvoiceRow } from "./store.ts";
+import { ataOf, creditsFor, creditsForChain, cursorOf, evmAddresses, invoiceByAddress, markMissing, saveCursor, upsertCredit, watchedInvoices, type InvoiceRow } from "./store.ts";
 import { incomingTransfers, refreshWallet, unlockTimeOf, walletHeight, walletRpc } from "./wallet-rpc.ts";
 
 type Backoff = { delay: number; nextAt: number };
@@ -116,7 +116,11 @@ const watchEvm = async (chain: "ethereum" | "polygon") => {
   if (identities.some((result) => result.status === "fulfilled" && result.value !== chainIdOf(chain))) throw new Error("wrong chain id");
   if (rpcs.length === 0) throw identities.find((result) => result.status === "rejected")?.reason ?? new Error("no provider");
   const head = await agreedEvmHead(rpcs);
-  const cursor = cursorOf(chain)?.height ?? Math.max(0, head.height - EVM_REORG_WINDOW[chain]);
+  const storedCursor = cursorOf(chain)?.height ?? Math.max(0, head.height - EVM_REORG_WINDOW[chain]);
+  const oldestUnsettled = creditsForChain(chain)
+    .filter((credit) => credit.settled === 0 && credit.disappeared_at == null && credit.wrong_asset === 0)
+    .reduce((lowest, credit) => Math.min(lowest, credit.height), storedCursor);
+  const cursor = Math.min(storedCursor, oldestUnsettled);
   const from = Math.max(0, Math.min(cursor, head.height) - EVM_REORG_WINDOW[chain]);
   const to = Math.min(head.height, Math.max(cursor, from) + EVM_LOG_BATCH[chain]);
   if (to < from) return;
@@ -137,10 +141,18 @@ const watchEvm = async (chain: "ethereum" | "polygon") => {
         const receipt = await firstRpc(rpcs, (rpc) => getReceipt(rpc, log.txHash));
         if (!receipt?.status) continue;
         const seenFinalized = head.height >= log.blockNumber && receipt.blockHash === log.blockHash;
+        const previouslyConfirmed = creditsFor(invoice.id).some((credit) => credit.tx_hash === log.txHash && credit.output_index === log.logIndex && credit.confirmed_at != null);
         let confirmed = head.sources > 1;
         if (seenFinalized && rpcs.length > 1) {
-          const other = await firstRpc(rpcs.slice(1), (rpc) => getReceipt(rpc, log.txHash));
-          confirmed = Boolean(other?.status && other.blockHash === receipt.blockHash);
+          try {
+            const other = await firstRpc(rpcs.slice(1), (rpc) => getReceipt(rpc, log.txHash));
+            confirmed = Boolean(other?.status && other.blockHash === receipt.blockHash);
+          } catch {
+            confirmed = true;
+          }
+        } else if (seenFinalized && previouslyConfirmed) {
+          const again = await getReceipt(rpcs[0] as JsonRpc, log.txHash);
+          confirmed = Boolean(again?.status && again.blockHash === receipt.blockHash && again.blockHash === log.blockHash);
         }
         const settled = seenFinalized && confirmed;
         upsertCredit({
@@ -157,6 +169,7 @@ const watchEvm = async (chain: "ethereum" | "polygon") => {
           locked: 0,
           wrong_asset: wrong ? 1 : 0,
           settled: settled && !wrong ? 1 : 0,
+          receiptConfirmed: seenFinalized,
           now: Date.now(),
         });
       }
@@ -169,9 +182,17 @@ const watchEvm = async (chain: "ethereum" | "polygon") => {
       .reduce((sum, credit) => sum + BigInt(credit.base_units), 0n);
     if (onChain !== logged) continue;
     let secondReadAgrees = head.sources > 1;
-    if (head.sources > 1) {
-      const otherBalance = await balanceOf(rpcs[1] as JsonRpc, invoice.token_contract as string, invoice.address);
-      secondReadAgrees = otherBalance === onChain;
+    if (!secondReadAgrees) {
+      const again = await balanceOf(rpcs[0] as JsonRpc, invoice.token_contract as string, invoice.address);
+      secondReadAgrees = again === onChain;
+    } else if (rpcs.length > 1) {
+      try {
+        const otherBalance = await balanceOf(rpcs[1] as JsonRpc, invoice.token_contract as string, invoice.address);
+        secondReadAgrees = otherBalance === onChain;
+      } catch {
+        const again = await balanceOf(rpcs[0] as JsonRpc, invoice.token_contract as string, invoice.address);
+        secondReadAgrees = again === onChain;
+      }
     }
     const fee = chain === "ethereum" && invoice.asset === "usdt" ? await usdtFee(rpcs[0] as JsonRpc, invoice.token_contract as string) : undefined;
     grantInFlight = true;
@@ -219,6 +240,7 @@ const watchSolana = async () => {
           locked: 0,
           wrong_asset: wrong ? 1 : 0,
           settled: slot.value - delta.slot >= SOLANA_REORG_SLOTS && !wrong ? 1 : 0,
+          receiptConfirmed: slot.value - delta.slot >= SOLANA_REORG_SLOTS,
           now: Date.now(),
         });
       }
@@ -287,6 +309,7 @@ const watchMoneroInvoice = async (invoice: InvoiceRow, height: number) => {
       locked: isLocked ? 1 : 0,
       wrong_asset: isLocked ? 1 : 0,
       settled: confirmations >= MONERO_CONFIRMATIONS && !isLocked ? 1 : 0,
+      receiptConfirmed: confirmations >= MONERO_CONFIRMATIONS && !isLocked,
       now,
     });
   }
