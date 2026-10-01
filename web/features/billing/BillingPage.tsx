@@ -61,12 +61,15 @@ export function BillingPage({ onQuota }: { onQuota?: (quota: Quota) => void }) {
   useEffect(() => {
     if (!invoice) return undefined;
     const refresh = () => {
-      api<{ quota: Quota; invoice: Invoice | null; payments?: PaymentRecord[] }>("/api/billing")
-        .then((data) => {
-          setInvoice(data.invoice);
-          setQuota(data.quota);
-          setPayments(data.payments ?? []);
-          onQuota?.(data.quota);
+      Promise.all([
+        api<Invoice>(`/api/billing/invoices/${invoice.id}`),
+        api<{ quota: Quota; invoice: Invoice | null; payments?: PaymentRecord[] }>("/api/billing"),
+      ])
+        .then(([current, billing]) => {
+          setInvoice(current);
+          setQuota(current.quota ?? billing.quota);
+          setPayments(billing.payments ?? []);
+          onQuota?.(current.quota ?? billing.quota);
         })
         .catch((err) => setError((err as Error).message));
     };
