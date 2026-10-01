@@ -49,6 +49,14 @@ export function App() {
     setMessages(data.messages);
   };
 
+  const signIn = async (next: User, nextQuota?: Quota, nextSettings?: Settings) => {
+    setUser(next);
+    if (nextQuota) setQuota(nextQuota);
+    if (nextSettings) setSettings({ ...defaultSettings, ...nextSettings });
+    setError("");
+    await loadChats();
+  };
+
   const titles: Record<View, string> = {
     chat: activeChatId ? chats.find((chat) => chat.id === activeChatId)?.title ?? "Open channel" : "New session",
     settings: "Control plane",
@@ -58,7 +66,7 @@ export function App() {
   };
 
   if (loading) return <div className="boot"><span className="sigil">UnabridgedAI</span><span>initializing private channel</span></div>;
-  if (!user) return <AuthScreen mode={authMode} setMode={setAuthMode} onAuth={(next, nextQuota, nextSettings) => { setUser(next); if (nextQuota) setQuota(nextQuota); if (nextSettings) setSettings({ ...defaultSettings, ...nextSettings }); }} error={error} setError={setError} />;
+  if (!user) return <AuthScreen mode={authMode} setMode={setAuthMode} onAuth={signIn} error={error} setError={setError} />;
 
   return (
     <div className={`app theme-${settings.theme}`}>
@@ -69,6 +77,13 @@ export function App() {
         onNewSession={() => openChat(null)}
         onOpenChat={(id) => openChat(id)}
         onChangeView={setView}
+        onChatsChange={setChats}
+        onChatRemoved={(id) => {
+          if (activeChatId === id) {
+            setActiveChatId(null);
+            setMessages([]);
+          }
+        }}
       />
       <main>
         <header>

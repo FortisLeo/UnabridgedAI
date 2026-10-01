@@ -6,6 +6,7 @@ export const userIdOf = (req: Request) => (req as AuthedRequest).userId;
 export type ChatRow = {
   id: string;
   title: string;
+  pinned: number;
   created_at: number;
   updated_at: number;
 };

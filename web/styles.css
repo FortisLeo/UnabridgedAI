@@ -123,8 +123,16 @@ header h1{font-size:24px;font-weight:600;letter-spacing:-.05em;margin:8px 0 0;ov
 .crypto-choices button:hover{border-color:#7a9240}
 .crypto-choices strong{font-size:13px;color:#eeeae0}
 .crypto-choices small{font:10px 'DM Mono';color:#8c9084;text-transform:uppercase}
-.crypto-invoice{display:grid;gap:12px;margin-top:22px}
-.crypto-invoice img{width:220px;background:#f4f1e8;padding:8px}
+.crypto-invoice{display:grid;gap:12px;margin-top:22px;min-width:0}
+.crypto-invoice img{width:min(220px,100%);height:auto;background:#f4f1e8;padding:8px}
+.payment-loader{display:flex;align-items:center;gap:10px;min-height:44px;font:11px 'DM Mono';color:#e5bf66;text-transform:uppercase}
+.payment-spinner{width:16px;height:16px;flex:none;border:2px solid #3c4134;border-top-color:#c9df70;border-radius:50%;animation:payment-spin 0.8s linear infinite}
+@keyframes payment-spin{to{transform:rotate(360deg)}}
+.past-payments{margin-top:28px;display:grid;gap:8px;min-width:0}
+.past-payments p{margin:8px 0 0}
+.past-payments .ledger-line{display:grid;gap:6px}
+.crypto-invoice .ledger-line,.past-payments .ledger-line{min-width:0}
+.crypto-invoice .ledger-line code,.crypto-invoice .ledger-line strong,.past-payments .ledger-line span,.past-payments .ledger-line strong{overflow-wrap:anywhere}
 .ledger{background:#151713}
 .ledger h3{font-size:25px;margin:10px 0 7px;letter-spacing:-.06em}
 .ledger-line{display:flex;justify-content:space-between;gap:12px;padding:16px 0;border-bottom:1px solid #2c2f28;font-size:10px;color:#787c70;text-transform:uppercase;min-width:0}
@@ -174,6 +182,18 @@ header h1{font-size:24px;font-weight:600;letter-spacing:-.05em;margin:8px 0 0;ov
 .chat-list button strong{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:inherit}
 .chat-list button small{font:10px 'DM Mono';color:#6a6e64}
 .empty-chats{color:#55594f;font-size:10px;padding:8px 10px}
+.session-search{display:grid;gap:2px;margin-top:6px}
+.session-search input{width:100%;border:1px solid #30332c;background:#141613;color:#eeeae0;padding:8px 10px;font-size:12px}
+.session-search input:focus{outline:1px solid #7a9240}
+.session-error{margin:0 10px 8px;font-size:11px}
+.session-menu{position:fixed;z-index:20;min-width:160px;display:grid;background:#191b17;border:1px solid #3a3d34;box-shadow:0 12px 30px #0008}
+.session-menu button{border:0;background:none;text-align:left;color:#eeeae0;padding:10px 12px;font-size:13px}
+.session-menu button:hover,.session-menu button:focus{background:#20221d;outline:none}
+.session-menu .danger-item{color:#e27b6b}
+.confirm-layer{position:fixed;inset:0;z-index:30;background:#111210cc;display:grid;place-items:center;padding:24px}
+.confirm-card{width:min(420px,100%);background:#191b17;border:1px solid #3a3d34;padding:22px;display:grid;gap:12px}
+.confirm-card h2{margin:0;font-size:22px;letter-spacing:-.04em}
+.confirm-card p{margin:0;color:#8c9084;font-size:14px;line-height:1.5}
 .toggles{display:flex;gap:8px;align-items:center;margin:0 0 10px;flex-wrap:wrap}
 .toggles button{position:static;width:auto;height:auto;border:1px solid #3a3d34;background:#121410;color:#8c9084;font-size:10px;padding:6px 8px;text-transform:uppercase;letter-spacing:.04em}
 .toggles button.on{border-color:#7a9240;color:#c9df70;background:#1c2214}
@@ -217,6 +237,8 @@ header h1{font-size:24px;font-weight:600;letter-spacing:-.05em;margin:8px 0 0;ov
 .theme-light{background:#f4f1ea;color:#1b1d17}
 .theme-light aside,.theme-light header,.theme-light .composer,.theme-light .plan-card,.theme-light .key-card,.theme-light .ledger,.theme-light .settings article{background:#fffdf8;border-color:#ddd7c8;color:#1b1d17}
 .theme-light nav button,.theme-light .chat-list button,.theme-light .signout,.theme-light .new-session{color:#5d6156}
+.theme-light .session-search input,.theme-light .session-menu,.theme-light .confirm-card{background:#fffdf8;border-color:#ddd7c8;color:#1b1d17}
+.theme-light .session-menu button{color:#1b1d17}
 .theme-light .muted,.theme-light .side-note,.theme-light .composer-meta,.theme-light .empty p{color:#6d7166}
 
 @media(max-width:760px){
@@ -239,9 +261,12 @@ header h1{font-size:24px;font-weight:600;letter-spacing:-.05em;margin:8px 0 0;ov
   .auth form{margin-top:28px}
   .auth-foot{margin-top:36px}
   .page-grid,.settings-grid,.feature-list,.crypto-choices{grid-template-columns:1fr}
-  .page-grid,.settings,.api-page,.docs{margin:20px auto;padding:0 16px 40px}
+  .page-grid,.settings,.api-page,.docs{margin:20px auto;padding:0 16px 40px;max-width:100%}
+  .page-grid,.plan-card,.ledger{min-width:0;overflow-x:hidden}
   .plan-card,.key-card,.ledger,.security-list,.settings article,.docs article{padding:18px}
   .plan-card h2,.key-card h2{margin:28px 0 12px;font-size:26px}
+  .crypto-choices button,.upgrade{min-height:44px}
+  .crypto-invoice .ledger-line,.past-payments .ledger-line{display:grid;gap:6px;align-items:start}
   .conversation{padding:20px 14px}
   .message{margin-bottom:22px}
   .composer{margin:0 auto 16px;width:calc(100% - 28px);padding:12px 52px 12px 12px}

@@ -26,7 +26,7 @@ export const classify = (invoice: InvoiceRow, credits: CreditRow[], now: number,
   const expected = parseBaseUnits(invoice.expected_base_units);
   const seen = grant + unsettled;
   const confirmed = secondReadAgrees && settledCredits.length > 0 && settledCredits.every((credit) => credit.first_seen_at < now);
-  if (grant === expected && seen === expected && confirmed) return "succeeded";
+  if (grant >= expected && confirmed) return "succeeded";
   if (seen > expected) return "overpaid";
   if (seen === expected && seen > 0n) return "exact_pending";
   if (seen > 0n && seen < expected) return "underpaid";
