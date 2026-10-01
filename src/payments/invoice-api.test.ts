@@ -58,6 +58,13 @@ try {
   assert.equal(billing.status, 200);
   assert.equal(billingBody.invoice?.id, invoice.id);
   assert.equal(billingBody.invoice?.address, invoice.address);
+  assert.equal(Array.isArray(billingBody.payments), true);
+  assert.equal(billingBody.payments.length, 1);
+  assert.equal(billingBody.payments[0].id, invoice.id);
+  assert.equal(billingBody.payments[0].displayAmount, invoice.displayAmount);
+  assert.equal(billingBody.payments[0].chain, "ethereum");
+  assert.equal(billingBody.payments[0].asset, "usdc");
+  assert.equal(billingBody.payments[0].status, "open");
   console.log("authenticated Ethereum USDC invoice creation and polling passed");
 } finally {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));

@@ -6,7 +6,7 @@ import { userIdOf } from "../types.ts";
 import { auth } from "../middleware/auth.ts";
 import { invoiceCreateGuard } from "../middleware/security.ts";
 import { resolvePair } from "../payments/allowlist.ts";
-import { createInvoice, InvoiceError, readInvoice, resumeInvoice, submitRefundAddress } from "../payments/invoices.ts";
+import { createInvoice, InvoiceError, paymentHistory, readInvoice, resumeInvoice, submitRefundAddress } from "../payments/invoices.ts";
 import { acceptWebhookHint, webhookSignatureValid } from "../payments/webhooks.ts";
 import { broadcastTransfer, confirmTransfer, prepareTransferGas, TransferError } from "../payments/transfers.ts";
 import { db } from "../db/client.ts";
@@ -17,7 +17,7 @@ billingRouter.get("/", auth, (req, res) => {
   const user = getUserUsage(userIdOf(req));
   if (!user) return res.status(401).json({ error: "Sign in required" });
   const userId = userIdOf(req);
-  res.json({ quota: quotaFor(user), invoice: resumeInvoice(userId) });
+  res.json({ quota: quotaFor(user), invoice: resumeInvoice(userId), payments: paymentHistory(userId) });
 });
 
 billingRouter.post("/invoices", auth, invoiceCreateGuard, async (req, res) => {

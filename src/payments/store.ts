@@ -119,6 +119,9 @@ export const insertInvoice = (input: {
 
 export const getInvoice = (id: string) => db.prepare("SELECT * FROM payment_invoices WHERE id = ?").get(id) as InvoiceRow | undefined;
 
+export const invoicesForUser = (userId: string) =>
+  db.prepare("SELECT * FROM payment_invoices WHERE user_id = ? ORDER BY created_at DESC").all(userId) as InvoiceRow[];
+
 export const creditsFor = (invoiceId: string) =>
   db.prepare("SELECT * FROM payment_credits WHERE invoice_id = ? ORDER BY first_seen_at ASC").all(invoiceId) as CreditRow[];
 
