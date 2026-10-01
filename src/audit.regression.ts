@@ -98,7 +98,7 @@ const test = (name: string, fn: () => Promise<void>) => checks.push([name, fn]);
 
 test("empty browser generation returns 502 without charging", async () => {
   const user = await signup();
-  upstreamQueue = Array.from({ length: 2 }, () => ({ status: 200, body: "data: [DONE]\n\n", contentType: "text/event-stream" }));
+  upstreamQueue = Array.from({ length: 4 }, () => ({ status: 200, body: "data: [DONE]\n\n", contentType: "text/event-stream" }));
   const response = await authed(user.cookie, "/api/chat", { method: "POST", body: JSON.stringify({ content: "hello" }) });
   assert.equal(response.status, 502);
   const row = db.prepare("SELECT requests_used FROM users WHERE username = ?").get(user.username) as { requests_used: number };
@@ -141,8 +141,14 @@ test("provider retry preserves the final error body", async () => {
   assert.equal(body.error.message, "final failure");
 });
 
+const webTestEnv = { ...process.env, NODE_ENV: "development", TSX_TSCONFIG_PATH: "tsconfig.web.json" };
+
 test("settings ordering and partial replies remain visible in components", async () => {
-  execFileSync(process.execPath, ["--import", "tsx", "web/ui.regression.tsx"], { env: { ...process.env, TSX_TSCONFIG_PATH: "tsconfig.web.json" }, stdio: "pipe" });
+  execFileSync(process.execPath, ["--import", "tsx", "web/ui.regression.tsx"], { env: webTestEnv, stdio: "pipe" });
+});
+
+test("login hydrates the session list and session actions pin, search, and delete", async () => {
+  execFileSync(process.execPath, ["--import", "tsx", "web/session.regression.tsx"], { env: webTestEnv, stdio: "pipe" });
 });
 
 test("settings patches preserve concurrent fields", async () => {
@@ -175,7 +181,7 @@ test("markdown rejects non-http links", async () => {
 });
 
 test("failed chat does not leave an empty session or burn quota", async () => {
-  upstreamQueue = [{ status: 401, body: JSON.stringify({ error: { message: "invalid api key" } }) }];
+  upstreamQueue = Array.from({ length: 8 }, () => ({ status: 401, body: JSON.stringify({ error: { message: "invalid api key" } }) }));
   const user = await signup();
   assert.equal(user.response.status, 200);
   const chat = await authed(user.cookie, "/api/chat", { method: "POST", body: JSON.stringify({ content: "hello audit" }) });
@@ -188,8 +194,9 @@ test("failed chat does not leave an empty session or burn quota", async () => {
   assert.equal(listed.chats.length, 0);
   const row = db.prepare("SELECT requests_used FROM users WHERE username = ?").get(user.username) as { requests_used: number };
   assert.equal(row.requests_used, 0);
-  const ghosts = db.prepare("SELECT COUNT(*) AS count FROM chats").get() as { count: number };
-  assert.equal(ghosts.count, 0);
+  const owner = (db.prepare("SELECT id FROM users WHERE username = ?").get(user.username) as { id: string }).id;
+  const ghosts = db.prepare("SELECT id, title FROM chats WHERE user_id = ?").all(owner);
+  assert.deepEqual(ghosts, []);
 });
 
 test("a successful chat is stored once and counts as one request", async () => {
@@ -407,7 +414,7 @@ test("renaming a chat does not un-archive it", async () => {
   const id = crypto.randomUUID();
   const now = Date.now();
   const owner = (db.prepare("SELECT id FROM users WHERE username = ?").get(user.username) as { id: string }).id;
-  db.prepare("INSERT INTO chats VALUES (?, ?, 'old', 1, ?, ?)").run(id, owner, now, now);
+  db.prepare("INSERT INTO chats (id, user_id, title, archived, created_at, updated_at) VALUES (?, ?, 'old', 1, ?, ?)").run(id, owner, now, now);
   const patched = await authed(user.cookie, `/api/chats/${id}`, { method: "PATCH", body: JSON.stringify({ title: "still archived?" }) });
   assert.equal(patched.status, 200);
   const row = db.prepare("SELECT archived, title FROM chats WHERE id = ?").get(id) as { archived: number; title: string };
@@ -479,6 +486,7 @@ test("an API key cannot export the account, and rotate revokes the old key", asy
 
 test("history-disabled chats do not load foreign history", async () => {
   upstreamBodies = [];
+  upstreamQueue = [{ status: 200, body: `${sseChunk("owned")}${sseChunk("", "stop")}data: [DONE]\n\n`, contentType: "text/event-stream" }];
   const alice = await signup();
   const saved = await authed(alice.cookie, "/api/chat", { method: "POST", body: JSON.stringify({ content: "private history" }) });
   const savedSse = await readSse(saved);
@@ -529,10 +537,69 @@ test("health checks the database", async () => {
   assert.equal(body.db, true);
 });
 
+test("signing back in hydrates saved sessions without another refresh", async () => {
+  upstreamQueue = [
+    { status: 200, body: `${sseChunk("stored")}${sseChunk("", "stop")}data: [DONE]\n\n`, contentType: "text/event-stream" },
+    { status: 200, body: `${sseChunk("stored")}${sseChunk("", "stop")}data: [DONE]\n\n`, contentType: "text/event-stream" },
+  ];
+  const created = await signup("returninguser", "password12345");
+  const chat = await authed(created.cookie, "/api/chat", { method: "POST", body: JSON.stringify({ content: "remember this session" }) });
+  assert.equal(chat.status, 200);
+  await chat.text();
+  const signedOut = await authed(created.cookie, "/api/auth/signout", { method: "POST" });
+  assert.equal(signedOut.status, 200);
+  const again = await fetch(`${base}/api/auth/signin`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: created.username, password: created.password }),
+  });
+  assert.equal(again.status, 200);
+  const cookie = cookieOf(again);
+  const me = await authed(cookie, "/api/me");
+  assert.equal(me.status, 200);
+  const listed = await (await authed(cookie, "/api/chats")).json();
+  assert.equal(listed.chats.length, 1);
+  assert.equal(listed.chats[0].title, "remember this session");
+  assert.equal(listed.chats[0].pinned, 0);
+});
+
+test("session pin, search, and delete stay on the owning account", async () => {
+  const owner = await signup();
+  const other = await signup();
+  const now = Date.now();
+  const ownerId = (db.prepare("SELECT id FROM users WHERE username = ?").get(owner.username) as { id: string }).id;
+  const alpha = crypto.randomUUID();
+  const beta = crypto.randomUUID();
+  db.prepare("INSERT INTO chats (id, user_id, title, archived, created_at, updated_at, pinned) VALUES (?, ?, 'Alpha notes', 0, ?, ?, 0)").run(alpha, ownerId, now, now);
+  db.prepare("INSERT INTO chats (id, user_id, title, archived, created_at, updated_at, pinned) VALUES (?, ?, 'Beta later', 0, ?, ?, 0)").run(beta, ownerId, now + 1, now + 2);
+  const pinned = await authed(owner.cookie, `/api/chats/${beta}`, { method: "PATCH", body: JSON.stringify({ pinned: true }) });
+  assert.equal(pinned.status, 200);
+  const pinnedBody = await pinned.json();
+  assert.equal(pinnedBody.chat.pinned, 1);
+  const listed = await (await authed(owner.cookie, "/api/chats")).json();
+  assert.deepEqual(listed.chats.map((chat: { title: string }) => chat.title), ["Beta later", "Alpha notes"]);
+  assert.deepEqual(
+    listed.chats.filter((chat: { title: string }) => chat.title.toLowerCase().includes("alpha")).map((chat: { id: string }) => chat.id),
+    [alpha],
+  );
+  const foreignPin = await authed(other.cookie, `/api/chats/${alpha}`, { method: "PATCH", body: JSON.stringify({ pinned: true }) });
+  assert.equal(foreignPin.status, 404);
+  const foreignDelete = await authed(other.cookie, `/api/chats/${alpha}`, { method: "DELETE" });
+  assert.equal(foreignDelete.status, 404);
+  const stillThere = db.prepare("SELECT pinned FROM chats WHERE id = ?").get(alpha) as { pinned: number };
+  assert.equal(stillThere.pinned, 0);
+  const removed = await authed(owner.cookie, `/api/chats/${alpha}`, { method: "DELETE" });
+  assert.equal(removed.status, 200);
+  const after = await (await authed(owner.cookie, "/api/chats")).json();
+  assert.deepEqual(after.chats.map((chat: { id: string }) => chat.id), [beta]);
+  const otherList = await (await authed(other.cookie, "/api/chats")).json();
+  assert.equal(otherList.chats.length, 0);
+});
+
 test("sidebar lists all visible chats", async () => {
   const user = await signup();
   const owner = (db.prepare("SELECT id FROM users WHERE username = ?").get(user.username) as { id: string }).id;
-  const insert = db.prepare("INSERT INTO chats VALUES (?, ?, ?, 0, ?, ?)");
+  const insert = db.prepare("INSERT INTO chats (id, user_id, title, archived, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?)");
   for (let i = 0; i < 101; i += 1) insert.run(crypto.randomUUID(), owner, `chat ${i}`, i, i);
   const list = await (await authed(user.cookie, "/api/chats")).json();
   assert.equal(list.chats.length, 101);
