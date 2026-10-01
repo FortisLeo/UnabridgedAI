@@ -11,8 +11,20 @@ type Invoice = {
   address: string;
   displayAmount: string;
   status: string;
+  createdAt: number;
   quota: Quota | null;
 };
+
+type PaymentRecord = {
+  id: string;
+  chain: string;
+  asset: string;
+  displayAmount: string;
+  status: string;
+  createdAt: number;
+};
+
+const paymentReceived = (status: string) => status === "succeeded" || status === "exact_pending" || status === "overpaid";
 
 const choices = [
   ["ethereum", "usdt", "USDT", "Ethereum"],
@@ -31,15 +43,17 @@ export function BillingPage({ onQuota }: { onQuota?: (quota: Quota) => void }) {
   const [quota, setQuota] = useState<Quota | null>(null);
   const [choosing, setChoosing] = useState(false);
   const [invoice, setInvoice] = useState<Invoice | null>(null);
+  const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [qr, setQr] = useState("");
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api<{ quota: Quota; invoice: Invoice | null }>("/api/billing")
+    api<{ quota: Quota; invoice: Invoice | null; payments?: PaymentRecord[] }>("/api/billing")
       .then((data) => {
         setQuota(data.quota);
         if (data.invoice) setInvoice(data.invoice);
+        setPayments(data.payments ?? []);
         if (data.quota) onQuota?.(data.quota);
       })
       .catch((err) => setError((err as Error).message));
@@ -49,12 +63,29 @@ export function BillingPage({ onQuota }: { onQuota?: (quota: Quota) => void }) {
     if (!invoice) return undefined;
     const refresh = () => {
       api<Invoice>(`/api/billing/invoices/${invoice.id}`)
-        .then((data) => {
-          setInvoice(data);
-          if (data.quota) {
-            setQuota(data.quota);
-            onQuota?.(data.quota);
+        .then((current) => {
+          setInvoice(current);
+          if (current.quota) {
+            setQuota(current.quota);
+            onQuota?.(current.quota);
           }
+          setPayments((records) => {
+            const record: PaymentRecord = {
+              id: current.id,
+              chain: current.chain,
+              asset: current.asset,
+              displayAmount: current.displayAmount,
+              status: current.status,
+              createdAt: current.createdAt,
+            };
+            const existing = records.findIndex((payment) => payment.id === current.id);
+            if (existing >= 0) {
+              const next = [...records];
+              next[existing] = record;
+              return next;
+            }
+            return [record, ...records];
+          });
         })
         .catch((err) => setError((err as Error).message));
     };
@@ -63,11 +94,14 @@ export function BillingPage({ onQuota }: { onQuota?: (quota: Quota) => void }) {
   }, [invoice?.id, onQuota]);
 
   useEffect(() => {
-    if (!invoice) return;
+    if (!invoice || quota?.plan === "pro") {
+      setQr("");
+      return;
+    }
     QRCode.toDataURL(invoice.address, { margin: 1, width: 220, color: { dark: "#111210", light: "#f4f1e8" } })
       .then(setQr)
       .catch(() => setError("The payment QR could not be created."));
-  }, [invoice?.address]);
+  }, [invoice?.address, quota?.plan]);
 
   const createInvoice = (chain: string, asset: string) => {
     setPaying(true);
@@ -95,7 +129,9 @@ export function BillingPage({ onQuota }: { onQuota?: (quota: Quota) => void }) {
   };
 
   const pro = quota?.plan === "pro";
+  const activeUnpaid = invoice && !pro && !paymentReceived(invoice.status) ? invoice.id : null;
   const assetLabel = invoice ? labelFor(invoice.chain, invoice.asset) : "";
+  const pastPayments = payments.filter((payment) => payment.id !== activeUnpaid);
 
   return (
     <section className="page-grid">
@@ -123,9 +159,15 @@ export function BillingPage({ onQuota }: { onQuota?: (quota: Quota) => void }) {
             ))}
           </div>
         )}
-        {invoice && (
+        {invoice && !pro && (
           <div className="crypto-invoice">
             {qr && <img src={qr} alt="Payment address QR code" />}
+            {!paymentReceived(invoice.status) && (
+              <div className="payment-loader" role="status" aria-label="Waiting for payment">
+                <span className="payment-spinner" />
+                <span>waiting for payment</span>
+              </div>
+            )}
             <div className="ledger-line"><span>amount</span><strong>{invoice.displayAmount} {assetLabel}</strong></div>
             <div className="ledger-line"><span>network</span><strong>{invoice.chain}</strong></div>
             {invoice.tokenContract && <div className="ledger-line"><span>contract</span><code>{invoice.tokenContract}</code></div>}
@@ -133,6 +175,19 @@ export function BillingPage({ onQuota }: { onQuota?: (quota: Quota) => void }) {
             <div className="ledger-line"><span>payment</span><strong className="amber">{invoice.status}</strong></div>
           </div>
         )}
+        <section className="past-payments" aria-label="Past payments">
+          <div className="eyebrow">past payments</div>
+          {pastPayments.length === 0 ? (
+            <p>No payments yet.</p>
+          ) : (
+            pastPayments.map((payment) => (
+              <div className="ledger-line" key={payment.id}>
+                <span>{new Date(payment.createdAt).toISOString().slice(0, 10)} · {payment.chain} · {labelFor(payment.chain, payment.asset)} · {payment.status}</span>
+                <strong>{payment.displayAmount}</strong>
+              </div>
+            ))
+          )}
+        </section>
       </div>
       <div className="ledger">
         <div className="eyebrow">access plan</div>

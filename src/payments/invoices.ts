@@ -13,6 +13,7 @@ import {
   blockingInvoice,
   creditsFor,
   getInvoice,
+  invoicesForUser,
   insertAddress,
   insertInvoice,
   insertSkipped,
@@ -113,6 +114,19 @@ export const resumeInvoice = (userId: string) => {
   if (!blocking) return null;
   return readInvoice(userId, blocking.id);
 };
+
+export const paymentHistory = (userId: string) =>
+  invoicesForUser(userId).map((invoice) => {
+    const decimals = invoice.chain === "monero" ? 12 : 6;
+    return {
+      id: invoice.id,
+      chain: invoice.chain,
+      asset: invoice.asset,
+      displayAmount: displayAmount(parseBaseUnits(invoice.expected_base_units), decimals),
+      status: invoice.status,
+      createdAt: invoice.created_at,
+    };
+  });
 
 export const submitRefundAddress = (userId: string, id: string, address: string, chain: string, now = Date.now()) => {
   const invoice = getInvoice(id);

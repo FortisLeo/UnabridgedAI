@@ -122,8 +122,16 @@ header h1{font-size:24px;font-weight:600;letter-spacing:-.05em;margin:8px 0 0;ov
 .crypto-choices button:hover{border-color:#7a9240}
 .crypto-choices strong{font-size:13px;color:#eeeae0}
 .crypto-choices small{font:10px 'DM Mono';color:#8c9084;text-transform:uppercase}
-.crypto-invoice{display:grid;gap:12px;margin-top:22px}
-.crypto-invoice img{width:220px;background:#f4f1e8;padding:8px}
+.crypto-invoice{display:grid;gap:12px;margin-top:22px;min-width:0}
+.crypto-invoice img{width:min(220px,100%);height:auto;background:#f4f1e8;padding:8px}
+.payment-loader{display:flex;align-items:center;gap:10px;min-height:44px;font:11px 'DM Mono';color:#e5bf66;text-transform:uppercase}
+.payment-spinner{width:16px;height:16px;flex:none;border:2px solid #3c4134;border-top-color:#c9df70;border-radius:50%;animation:payment-spin 0.8s linear infinite}
+@keyframes payment-spin{to{transform:rotate(360deg)}}
+.past-payments{margin-top:28px;display:grid;gap:8px;min-width:0}
+.past-payments p{margin:8px 0 0}
+.past-payments .ledger-line{display:grid;gap:6px}
+.crypto-invoice .ledger-line,.past-payments .ledger-line{min-width:0}
+.crypto-invoice .ledger-line code,.crypto-invoice .ledger-line strong,.past-payments .ledger-line span,.past-payments .ledger-line strong{overflow-wrap:anywhere}
 .ledger{background:#151713}
 .ledger h3{font-size:25px;margin:10px 0 7px;letter-spacing:-.06em}
 .ledger-line{display:flex;justify-content:space-between;padding:16px 0;border-bottom:1px solid #2c2f28;font-size:10px;color:#787c70;text-transform:uppercase}
@@ -245,7 +253,14 @@ header h1{font-size:24px;font-weight:600;letter-spacing:-.05em;margin:8px 0 0;ov
   .auth-art{display:none}
   .auth-kicker{margin-top:70px}
   .page-grid,.settings-grid,.feature-list{grid-template-columns:1fr}
-  .page-grid,.settings,.api-page,.docs{margin:35px auto;padding:0 18px 50px}
+  .page-grid,.settings,.api-page,.docs{margin:35px auto;padding:0 18px 50px;max-width:100%}
+  .page-grid,.plan-card,.ledger{min-width:0;overflow-x:hidden}
+  .plan-card,.ledger{padding:22px 16px}
+  .plan-card h2{margin-top:28px;font-size:28px}
+  .crypto-choices{grid-template-columns:1fr}
+  .crypto-choices button,.upgrade{min-height:44px}
+  .crypto-invoice .ledger-line,.past-payments .ledger-line{display:grid;gap:6px;align-items:start}
+  .crypto-invoice img{width:min(220px,100%)}
   .conversation{padding:30px 18px}
   .composer{margin:0 auto 18px;width:calc(100% - 36px)}
   .empty h2{font-size:32px}
