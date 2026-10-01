@@ -8,7 +8,7 @@ import { deriveEvmAddress } from "./evm-address.ts";
 import { associatedTokenAddress, isSolanaAddress } from "./solana-ata.ts";
 import { deriveSolanaOwner, solanaConfigured } from "./solana-helper.ts";
 import { addressIndex, createSubaddress, isMainnetSubaddress, makeUri, moneroConfigured, setLookahead } from "./wallet-rpc.ts";
-import { sums } from "./settle.ts";
+import { applySettlement, sums } from "./settle.ts";
 import {
   blockingInvoice,
   creditsFor,
@@ -104,9 +104,20 @@ const allocate = async (family: "evm" | "solana" | "monero", index: number, pair
 };
 
 export const readInvoice = (userId: string, id: string) => {
-  const invoice = getInvoice(id);
+  let invoice = getInvoice(id);
   if (!invoice || invoice.user_id !== userId) return null;
-  return present(invoice, creditsFor(id));
+  const credits = creditsFor(id);
+  const expected = parseBaseUnits(invoice.expected_base_units);
+  const settledReceived = credits
+    .filter((credit) => credit.settled === 1 && credit.locked === 0 && credit.wrong_asset === 0 && credit.disappeared_at == null)
+    .reduce((total, credit) => total + parseBaseUnits(credit.base_units), 0n);
+  // A watcher can record and finalize a credit just before its invoice update. Reconcile
+  // on the polling endpoint so a paid invoice cannot remain visibly open indefinitely.
+  if (invoice.status !== "succeeded" && invoice.status !== "refund_pending" && invoice.status !== "refunded" && settledReceived >= expected) {
+    applySettlement(invoice, credits, Date.now(), true);
+    invoice = getInvoice(id);
+  }
+  return invoice ? present(invoice, creditsFor(id)) : null;
 };
 
 export const resumeInvoice = (userId: string) => {
