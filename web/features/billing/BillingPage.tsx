@@ -11,6 +11,7 @@ type Invoice = {
   address: string;
   displayAmount: string;
   status: string;
+  createdAt: number;
   quota: Quota | null;
 };
 
@@ -61,15 +62,30 @@ export function BillingPage({ onQuota }: { onQuota?: (quota: Quota) => void }) {
   useEffect(() => {
     if (!invoice) return undefined;
     const refresh = () => {
-      Promise.all([
-        api<Invoice>(`/api/billing/invoices/${invoice.id}`),
-        api<{ quota: Quota; invoice: Invoice | null; payments?: PaymentRecord[] }>("/api/billing"),
-      ])
-        .then(([current, billing]) => {
+      api<Invoice>(`/api/billing/invoices/${invoice.id}`)
+        .then((current) => {
           setInvoice(current);
-          setQuota(current.quota ?? billing.quota);
-          setPayments(billing.payments ?? []);
-          onQuota?.(current.quota ?? billing.quota);
+          if (current.quota) {
+            setQuota(current.quota);
+            onQuota?.(current.quota);
+          }
+          setPayments((records) => {
+            const record: PaymentRecord = {
+              id: current.id,
+              chain: current.chain,
+              asset: current.asset,
+              displayAmount: current.displayAmount,
+              status: current.status,
+              createdAt: current.createdAt,
+            };
+            const existing = records.findIndex((payment) => payment.id === current.id);
+            if (existing >= 0) {
+              const next = [...records];
+              next[existing] = record;
+              return next;
+            }
+            return [record, ...records];
+          });
         })
         .catch((err) => setError((err as Error).message));
     };

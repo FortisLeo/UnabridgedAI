@@ -55,6 +55,7 @@ const invoice = {
   address: "0x1111111111111111111111111111111111111111",
   displayAmount: "15.000000",
   status: "open",
+  createdAt: Date.parse("2026-04-02T00:00:00.000Z"),
   quota: { plan: "free" as const, requestsUsed: 1, requestsLimit: 3, remaining: 2 },
 };
 const payment = {
@@ -67,9 +68,11 @@ const payment = {
 };
 let payload: { quota: unknown; invoice: unknown; payments: unknown[] } = { quota: invoice.quota, invoice, payments: [payment] };
 let invoicePayload: unknown = invoice;
+let billingRequests = 0;
 const originalFetch = globalThis.fetch;
 globalThis.fetch = (async (url: string) => {
   if (String(url).includes("/invoices/")) return Response.json(invoicePayload);
+  billingRequests += 1;
   return Response.json(payload);
 }) as typeof fetch;
 
@@ -153,8 +156,9 @@ try {
   assert.equal(qr?.getAttribute("src")?.startsWith("data:image/"), true);
 
   await act(async () => reactRoot.unmount());
+  const prior = { ...payment, id: "inv-0", status: "succeeded", createdAt: Date.parse("2026-03-01T00:00:00.000Z") };
   invoicePayload = invoice;
-  payload = { quota: invoice.quota, invoice, payments: [payment] };
+  payload = { quota: invoice.quota, invoice, payments: [payment, prior] };
   const pollers: (() => void)[] = [];
   const realSetInterval = window.setInterval;
   window.setInterval = ((handler: TimerHandler) => {
@@ -162,45 +166,42 @@ try {
     return 0;
   }) as typeof window.setInterval;
   try {
+    const beforeShow = billingRequests;
     reactRoot = await show();
+    assert.equal(billingRequests, beforeShow + 1, "the initial load fetches the billing summary once");
+    payload = { quota: { plan: "free", requestsUsed: 1, requestsLimit: 3, remaining: 2 }, invoice: null, payments: [prior, { ...payment, status: "wrong_asset" }] };
     assert.ok(root.querySelector(".payment-loader"), "the unpaid loader shows before payment");
-    assert.match(root.querySelector(".past-payments")?.textContent ?? "", /No payments yet/, "the active pending invoice stays out of past payments");
+    assert.match(root.querySelector(".past-payments")?.textContent ?? "", /2026-03-01/, "the prior settled payment is listed");
+    assert.doesNotMatch(root.querySelector(".past-payments")?.textContent ?? "", /2026-04-02/, "the active pending invoice stays out of past payments");
     assert.equal(pollers.length, 1, "the unpaid invoice starts polling");
 
+    const afterShow = billingRequests;
     invoicePayload = { ...invoice, status: "wrong_asset" };
-    payload = {
-      quota: { plan: "free", requestsUsed: 1, requestsLimit: 3, remaining: 2 },
-      invoice: null,
-      payments: [{ ...payment, status: "wrong_asset" }, { ...payment, id: "inv-0", status: "succeeded", createdAt: Date.parse("2026-03-01T00:00:00.000Z") }],
-    };
     await act(async () => {
       pollers.at(-1)?.();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
+    assert.equal(billingRequests, afterShow, "the poll does not re-fetch the full billing history");
     const wrongAsset = root.querySelector(".crypto-invoice");
     assert.ok(wrongAsset, "a non-blocking unresolved status keeps the current payment block on screen");
     assert.ok(root.querySelector(".payment-loader"), "the loader keeps rotating when no payment was received");
     assert.match(wrongAsset.textContent ?? "", /wrong_asset/);
-    assert.match(root.querySelector(".past-payments")?.textContent ?? "", /succeeded/, "the poll still refreshes past payments");
-    assert.match(root.querySelector(".past-payments")?.textContent ?? "", /15\.000000/);
+    assert.doesNotMatch(root.querySelector(".past-payments")?.textContent ?? "", /2026-04-02/, "the wrong-asset active invoice stays out of past payments");
+    assert.match(root.querySelector(".past-payments")?.textContent ?? "", /2026-03-01/, "the prior settled payment is unchanged");
 
-    invoicePayload = { ...invoice, status: "succeeded" };
-    payload = {
-      quota: { plan: "pro", requestsUsed: 4, requestsLimit: null, remaining: null },
-      invoice: null,
-      payments: [{ ...payment, status: "succeeded" }, { ...payment, id: "inv-0", status: "succeeded", createdAt: Date.parse("2026-03-01T00:00:00.000Z") }],
-    };
+    invoicePayload = { ...invoice, status: "succeeded", quota: { plan: "pro", requestsUsed: 4, requestsLimit: null, remaining: null } };
     await act(async () => {
       pollers.at(-1)?.();
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
+    assert.equal(billingRequests, afterShow, "the payment poll still uses only the invoice endpoint");
     assert.equal(root.querySelector(".payment-loader"), null, "the loader clears after payment");
     const refreshed = root.querySelector(".past-payments")?.textContent ?? "";
-    assert.match(refreshed, /succeeded/, "the poll refreshes past payments");
-    assert.match(refreshed, /2026-03-01/, "a prior settled invoice appears in past payments");
+    assert.match(refreshed, /2026-03-01/, "a prior settled invoice remains in past payments");
     assert.match(refreshed, /2026-04-02/, "the just-paid active invoice now appears in past payments");
     assert.equal((refreshed.match(/15\.000000/g) ?? []).length, 2, "both paid invoices list their amount");
-    assert.doesNotMatch(refreshed, /open/, "no stale open status remains");
+    assert.match(refreshed, /succeeded/, "the updated status is shown");
+    assert.doesNotMatch(refreshed, /wrong_asset/, "the stale status is replaced in place");
   } finally {
     window.setInterval = realSetInterval;
   }
