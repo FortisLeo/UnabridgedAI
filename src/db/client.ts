@@ -34,6 +34,8 @@ db.transaction(() => {
 })();
 const keyColumns = db.prepare("PRAGMA table_info(api_keys)").all() as Array<{ name: string }>;
 if (!keyColumns.some((column) => column.name === "name")) db.exec("ALTER TABLE api_keys ADD COLUMN name TEXT NOT NULL DEFAULT 'default'");
+const chatColumns = db.prepare("PRAGMA table_info(chats)").all() as Array<{ name: string }>;
+if (chatColumns.length && !chatColumns.some((column) => column.name === "pinned")) db.exec("ALTER TABLE chats ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
 db.exec("DROP TABLE IF EXISTS payments");
 // Rate-limit counters on loopback were a local-dev lockout, not a block list.
 // Blacklist rows stay: a private address can be blocked on purpose.

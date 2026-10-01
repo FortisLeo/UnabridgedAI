@@ -16,6 +16,7 @@ export type Quota = {
 export type ChatSummary = {
   id: string;
   title: string;
+  pinned?: number;
   created_at: number;
   updated_at: number;
 };
