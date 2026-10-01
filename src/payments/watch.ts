@@ -7,6 +7,7 @@ import { padTopicAddress } from "./evm-address.ts";
 import { applySettlement } from "./settle.ts";
 import { ataOf, creditsFor, creditsForChain, cursorOf, evmAddresses, invoiceByAddress, markMissing, saveCursor, upsertCredit, watchedInvoices, type InvoiceRow } from "./store.ts";
 import { incomingTransfers, refreshWallet, unlockTimeOf, walletHeight, walletRpc } from "./wallet-rpc.ts";
+import { deliverDueWebhooks } from "./webhooks.ts";
 
 type Backoff = { delay: number; nextAt: number };
 const backoff = new Map<string, Backoff>();
@@ -53,6 +54,7 @@ const tick = async () => {
     if (ready("polygon")) await watchEvm("polygon").then(() => noteSuccess("polygon")).catch((error) => noteFailure("polygon", error));
     if (ready("solana")) await watchSolana().then(() => noteSuccess("solana")).catch((error) => noteFailure("solana", error));
     if (ready("monero")) await watchMonero().then(() => noteSuccess("monero")).catch((error) => noteFailure("monero", error));
+    await deliverDueWebhooks().catch((error) => noteFailure("webhook", error));
   } finally {
     running = false;
   }

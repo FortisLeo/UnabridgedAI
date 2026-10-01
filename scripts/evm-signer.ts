@@ -137,13 +137,23 @@ const readItem = (bytes: Uint8Array, offset: number): [Uint8Array, number] => {
 
 const quantity = (bytes: Uint8Array) => (bytes.length === 0 ? 0n : bytesToBigInt(bytes));
 
-export const signSweep = (account: ExtendedKey, request: { unsignedTx: string; fromAddress: string; derivationIndex: number; chainId: number }) => {
+const addressFromCall = (data: Uint8Array) => {
+  if (data.length < 36) throw new Error("Refusing a call that is not a token transfer");
+  const selector = Buffer.from(data.subarray(0, 4)).toString("hex");
+  if (selector !== "a9059cbb") throw new Error("Refusing a call that is not a token transfer");
+  return `0x${Buffer.from(data.subarray(16, 36)).toString("hex")}`;
+};
+
+export const signSweep = (account: ExtendedKey, request: { unsignedTx: string; fromAddress: string; derivationIndex: number; chainId: number; coldAddress?: string }) => {
   if (!/^0x[0-9a-fA-F]+$/.test(request.unsignedTx)) throw new Error("unsignedTx must be hex");
   const items = decodeRlpList(Uint8Array.from(Buffer.from(request.unsignedTx.slice(2), "hex")));
   const chainId = quantity(items[6]!);
   if (chainId !== 137n && chainId !== 1n) throw new Error("Refusing a chain other than Polygon or Ethereum");
   if (BigInt(request.chainId) !== chainId) throw new Error("Chain id does not match the transaction");
   if (quantity(items[4]!) !== 0n) throw new Error("Refusing a transaction that sends native currency");
+  const cold = (request.coldAddress ?? (chainId === 137n ? process.env.POLYGON_COLD_ADDRESS : process.env.ETHEREUM_COLD_ADDRESS) ?? "").toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(cold)) throw new Error("Configure one cold address before signing");
+  if (addressFromCall(items[5]!).toLowerCase() !== cold) throw new Error("Refusing a transfer that does not pay the cold address");
   const key = deriveDepositKey(account, request.derivationIndex);
   if (addressOf(key).toLowerCase() !== request.fromAddress.toLowerCase()) throw new Error("Derived address does not match the paid address");
   const hash = keccak_256(Uint8Array.from(Buffer.from(request.unsignedTx.slice(2), "hex")));
@@ -173,7 +183,8 @@ const start = () => {
   }
   try {
     const body = JSON.parse(await readBody(req)) as { unsignedTx: string; fromAddress: string; derivationIndex: number; chainId: number };
-    const signed = signSweep(account, body);
+    const coldAddress = body.chainId === 137 ? process.env.POLYGON_COLD_ADDRESS : process.env.ETHEREUM_COLD_ADDRESS;
+    const signed = signSweep(account, { ...body, coldAddress });
     res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(signed));
   } catch (error) {
     res.writeHead(400, { "content-type": "application/json" }).end(JSON.stringify({ error: error instanceof Error ? error.message : "rejected" }));

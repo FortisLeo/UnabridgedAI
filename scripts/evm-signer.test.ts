@@ -42,7 +42,7 @@ const unsigned = unsignedTokenTransfer({
   chainId: 137n,
 });
 
-const signed = signSweep(account, { unsignedTx: unsigned, fromAddress: from, derivationIndex: index, chainId: 137 });
+const signed = signSweep(account, { unsignedTx: unsigned, fromAddress: from, derivationIndex: index, chainId: 137, coldAddress: cold });
 const raw = Buffer.from(signed.signedTx.slice(2), "hex");
 const s = raw.subarray(raw.length - 32);
 const r = raw.subarray(raw.length - 65, raw.length - 33);
@@ -50,6 +50,8 @@ const recovery = Number(raw.subarray(raw.length - 68, raw.length - 66).readUInt1
 const hash = keccak_256(Buffer.from(unsigned.slice(2), "hex"));
 const recovered = secp256k1.Signature.fromCompact(Buffer.concat([r, s])).addRecoveryBit(recovery).recoverPublicKey(hash).toRawBytes(false).subarray(1);
 assert.equal(`0x${Buffer.from(keccak_256(recovered).subarray(12)).toString("hex")}`, from);
-assert.throws(() => signSweep(account, { unsignedTx: unsigned, fromAddress: cold, derivationIndex: index, chainId: 137 }));
+assert.throws(() => signSweep(account, { unsignedTx: unsigned, fromAddress: cold, derivationIndex: index, chainId: 137, coldAddress: cold }));
+const attacker = unsignedTokenTransfer({ nonce: 3n, gasPrice: 100n, gasLimit: 80_000n, token: "0x3c499c542cef5e3811e1192ce70d8cc03d5c3359", to: "0x3333333333333333333333333333333333333333", amount: 10_000n, chainId: 137n });
+assert.throws(() => signSweep(account, { unsignedTx: attacker, fromAddress: from, derivationIndex: index, chainId: 137, coldAddress: cold }));
 
 console.log("evm signer test passed");

@@ -1,6 +1,7 @@
 import { db } from "../db/client.ts";
 import { compareBaseUnits, parseBaseUnits } from "./amounts.ts";
 import type { InvoiceRow, CreditRow } from "./store.ts";
+import { enqueuePaymentWebhook } from "./webhooks.ts";
 
 export type InvoiceStatus =
   | "open"
@@ -71,6 +72,7 @@ export const applySettlement = (invoice: InvoiceRow, credits: CreditRow[], now: 
       now,
       JSON.stringify({ status, reason }),
     );
+    if (status !== invoice.status) enqueuePaymentWebhook(invoice.id, "payment.status", now);
     return { status, alreadyPro, grantAppliedAt };
   })();
   return { status: grant.status, granted: grant.grantAppliedAt != null, alreadyPro: grant.alreadyPro === 1 };
