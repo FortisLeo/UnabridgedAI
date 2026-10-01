@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { JSDOM } from "jsdom";
 const dom = new JSDOM('<div id="root"></div>', { url: "http://localhost" });
 Object.assign(globalThis, { window: dom.window, document: dom.window.document, HTMLElement: dom.window.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true });
@@ -57,6 +58,36 @@ try {
   assert.ok(reply.includes("visible partial"));
   assert.ok(reply.includes("stream interrupted"));
   await act(async () => root.unmount());
+  const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+  const mobile = css.match(/@media\(max-width:760px\)\{([\s\S]*)\}\s*$/)?.[1] ?? "";
+  assert.ok(mobile.length > 0, "mobile breakpoint missing");
+  for (const rule of [
+    ".app{display:block",
+    ".signout{display:inline-flex",
+    ".auth{display:block",
+    ".page-grid,.settings-grid,.feature-list,.crypto-choices{grid-template-columns:1fr",
+    ".chat{height:auto",
+    "header h1{font-size:20px;max-width:100%;white-space:normal",
+    ".code-block pre,.snippet{overflow-x:auto",
+  ]) assert.ok(mobile.includes(rule), rule);
+  assert.ok(!/\.status,\.side-note,\.signout/.test(mobile), "sign out must stay available on narrow screens");
+  assert.match(css, /overflow-wrap:anywhere/);
+  assert.match(css, /100dvh/);
+  const { Sidebar } = await import("./features/shell/Sidebar.tsx");
+  const { AuthScreen } = await import("./features/auth/AuthScreen.tsx");
+  const markupRoot = createRoot(container);
+  await act(async () => markupRoot.render(
+    <>
+      <Sidebar chats={[{ id: "1", title: "A very long session title that must stay inside the rail", created_at: Date.now(), updated_at: Date.now() }]} activeChatId="1" view="chat" onNewSession={() => {}} onOpenChat={() => {}} onChangeView={() => {}} />
+      <AuthScreen mode="signin" setMode={() => {}} onAuth={() => {}} error="" setError={() => {}} />
+    </>,
+  ));
+  assert.ok(container.querySelector("aside .signout"));
+  assert.ok(container.querySelector("aside nav"));
+  assert.ok(container.querySelector(".auth-panel"));
+  assert.ok(container.querySelector(".auth-art"));
+  assert.equal(container.querySelectorAll("input").length, 2);
+  await act(async () => markupRoot.unmount());
   console.log("component regressions passed");
 } finally {
   globalThis.fetch = originalFetch;
