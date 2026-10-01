@@ -74,7 +74,7 @@ const credit = {
 assert.equal(classify(invoice, [{ ...credit, first_seen_at: 2_000 }], 2_000, true), "exact_pending");
 assert.equal(classify(invoice, [credit], 2_000, true), "succeeded");
 assert.equal(classify(invoice, [credit], 2_000, false), "exact_pending");
-assert.equal(classify(invoice, [credit, { ...credit, id: "pending", tx_hash: "0x2", settled: 0, base_units: "1" }], 2_000, true), "overpaid");
+assert.equal(classify(invoice, [credit, { ...credit, id: "pending", tx_hash: "0x2", settled: 0, base_units: "1" }], 2_000, true), "succeeded");
 assert.equal(classify(invoice, [{ ...credit, base_units: "14999999" }], 2_000, true), "underpaid");
 assert.equal(classify(invoice, [{ ...credit, base_units: "15000001" }], 2_000, true), "succeeded");
 const extra = (id: string, hash: string, units = "10000") => ({ ...credit, id, tx_hash: hash, base_units: units });
@@ -85,7 +85,7 @@ assert.equal(classify(polygon, fourCredits.slice(0, 1), 2_000, true), "succeeded
 assert.equal(classify(polygon, fourCredits, 2_000, false), "overpaid");
 assert.equal(classify(polygon, [extra("short", "0xe", "9999")], 2_000, true), "underpaid");
 assert.equal(classify(polygon, fourCredits.map((item) => ({ ...item, settled: 0 })), 2_000, true), "overpaid");
-assert.equal(classify(polygon, [...fourCredits, { ...extra("dust", "0xf", "1"), settled: 0 }], 2_000, true), "overpaid");
+assert.equal(classify(polygon, [...fourCredits, { ...extra("dust", "0xf", "1"), settled: 0 }], 2_000, true), "succeeded");
 assert.equal(classify(polygon, [extra("c1", "0xa"), extra("c2", "0xb", "1")], 2_000, true), "succeeded");
 assert.equal(classify(invoice, [{ ...credit, wrong_asset: 1, base_units: "15000000", settled: 0 }], 2_000, true), "wrong_asset");
 assert.equal(classify(invoice, [{ ...credit, settled: 0 }], 2_000, true), "exact_pending");
@@ -131,6 +131,7 @@ for (const [id, hash] of [["c1", "0xa"], ["c2", "0xb"], ["c3", "0xc"], ["c4", "0
 assert.equal(applySettlement(storedInvoice(), storedCredits(), 2_000, true).status, "overpaid");
 assert.equal((db.prepare("SELECT plan FROM users WHERE id = ?").get(payer) as { plan: string }).plan, "free");
 db.prepare("UPDATE payment_credits SET settled = 1, settled_at = 100 WHERE invoice_id = '0211316c-6b7f-4231-b3a0-2cd348e0467d'").run();
+insertCredit("dust", "0xf", "1", 0);
 assert.equal(applySettlement(storedInvoice(), storedCredits(), 2_000, false).status, "overpaid");
 assert.equal((db.prepare("SELECT plan FROM users WHERE id = ?").get(payer) as { plan: string }).plan, "free");
 const settled = applySettlement(storedInvoice(), storedCredits(), 2_000, true);

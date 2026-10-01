@@ -26,8 +26,6 @@ export const classify = (invoice: InvoiceRow, credits: CreditRow[], now: number,
   const expected = parseBaseUnits(invoice.expected_base_units);
   const seen = grant + unsettled;
   const confirmed = secondReadAgrees && settledCredits.length > 0 && settledCredits.every((credit) => credit.first_seen_at < now);
-  // A settled amount at or above the price is paid. Unsettled funds above the price stay overpaid.
-  if (unsettled > 0n && seen > expected) return "overpaid";
   if (grant >= expected && confirmed) return "succeeded";
   if (seen > expected) return "overpaid";
   if (seen === expected && seen > 0n) return "exact_pending";
