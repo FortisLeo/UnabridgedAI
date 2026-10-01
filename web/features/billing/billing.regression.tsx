@@ -152,6 +152,39 @@ try {
   const qr = root.querySelector("img");
   assert.match(qr?.getAttribute("alt") ?? "", /QR/);
   assert.equal(qr?.getAttribute("src")?.startsWith("data:image/"), true);
+
+  await act(async () => reactRoot.unmount());
+  payload = { quota: invoice.quota, invoice, payments: [payment] };
+  const pollers: (() => void)[] = [];
+  const realSetInterval = window.setInterval;
+  window.setInterval = ((handler: TimerHandler) => {
+    if (typeof handler === "function") pollers.push(handler as () => void);
+    return 0;
+  }) as typeof window.setInterval;
+  try {
+    reactRoot = await show();
+    assert.ok(root.querySelector(".payment-loader"), "the unpaid loader shows before payment");
+    assert.match(root.querySelector(".past-payments")?.textContent ?? "", /open/);
+    assert.equal(pollers.length, 1, "the unpaid invoice starts polling");
+
+    payload = {
+      quota: { plan: "pro", requestsUsed: 4, requestsLimit: null, remaining: null },
+      invoice: null,
+      payments: [{ ...payment, status: "succeeded", receivedDisplayAmount: "15.000000", settledAt: Date.parse("2026-04-03T00:00:00.000Z") }],
+    };
+    await act(async () => {
+      pollers.at(-1)?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    assert.equal(root.querySelector(".payment-loader"), null, "the loader clears after payment");
+    assert.equal(root.querySelector(".crypto-invoice"), null, "the current payment block clears after payment");
+    const refreshed = root.querySelector(".past-payments")?.textContent ?? "";
+    assert.match(refreshed, /succeeded/, "the poll refreshes the past-payment status");
+    assert.doesNotMatch(refreshed, /open/, "the paid invoice is no longer shown as open");
+    assert.match(refreshed, /15\.000000/);
+  } finally {
+    window.setInterval = realSetInterval;
+  }
   console.log("billing payment history UI regressions passed");
 } finally {
   globalThis.fetch = originalFetch;
