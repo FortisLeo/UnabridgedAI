@@ -118,16 +118,13 @@ export const resumeInvoice = (userId: string) => {
 export const paymentHistory = (userId: string) =>
   invoicesForUser(userId).map((invoice) => {
     const decimals = invoice.chain === "monero" ? 12 : 6;
-    const received = sums(invoice, creditsFor(invoice.id)).received;
     return {
       id: invoice.id,
       chain: invoice.chain,
       asset: invoice.asset,
       displayAmount: displayAmount(parseBaseUnits(invoice.expected_base_units), decimals),
-      receivedDisplayAmount: displayAmount(received, decimals),
       status: invoice.status,
       createdAt: invoice.created_at,
-      settledAt: invoice.settled_at,
     };
   });
 

@@ -62,10 +62,8 @@ const payment = {
   chain: "ethereum",
   asset: "usdc",
   displayAmount: "15.000000",
-  receivedDisplayAmount: "0.000000",
   status: "open",
   createdAt: Date.parse("2026-04-02T00:00:00.000Z"),
-  settledAt: null as number | null,
 };
 let payload: { quota: unknown; invoice: unknown; payments: unknown[] } = { quota: invoice.quota, invoice, payments: [payment] };
 const originalFetch = globalThis.fetch;
@@ -90,8 +88,8 @@ const show = async () => {
 try {
   payload = {
     quota: { plan: "pro", requestsUsed: 4, requestsLimit: null, remaining: null },
-    invoice: { ...invoice, status: "succeeded", quota: { plan: "pro", requestsUsed: 4, requestsLimit: null, remaining: null } },
-    payments: [{ ...payment, status: "succeeded", receivedDisplayAmount: "15.000000", settledAt: Date.parse("2026-04-03T00:00:00.000Z") }],
+    invoice: null,
+    payments: [{ ...payment, status: "succeeded" }],
   };
   let reactRoot = await show();
   assert.equal(root.querySelector("img"), null, "Pro accounts must not show a payment QR");
@@ -120,7 +118,7 @@ try {
   const keyframes = rules.find((rule) => "name" in rule && rule.name === "payment-spin") as CSSKeyframesRule | undefined;
   assert.ok(keyframes);
   assert.match([...keyframes.cssRules].map((rule) => rule.cssText).join(" "), /rotate\(360deg\)/);
-  assert.match(root.querySelector(".past-payments")?.textContent ?? "", /15\.000000/);
+  assert.match(root.querySelector(".past-payments")?.textContent ?? "", /No payments yet/, "the active pending invoice is not listed as a past payment");
   assert.ok(root.textContent?.includes(invoice.address));
 
   Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
@@ -164,13 +162,13 @@ try {
   try {
     reactRoot = await show();
     assert.ok(root.querySelector(".payment-loader"), "the unpaid loader shows before payment");
-    assert.match(root.querySelector(".past-payments")?.textContent ?? "", /open/);
+    assert.match(root.querySelector(".past-payments")?.textContent ?? "", /No payments yet/, "the active pending invoice stays out of past payments");
     assert.equal(pollers.length, 1, "the unpaid invoice starts polling");
 
     payload = {
       quota: { plan: "pro", requestsUsed: 4, requestsLimit: null, remaining: null },
       invoice: null,
-      payments: [{ ...payment, status: "succeeded", receivedDisplayAmount: "15.000000", settledAt: Date.parse("2026-04-03T00:00:00.000Z") }],
+      payments: [{ ...payment, status: "succeeded" }],
     };
     await act(async () => {
       pollers.at(-1)?.();

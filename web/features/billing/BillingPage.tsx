@@ -19,10 +19,8 @@ type PaymentRecord = {
   chain: string;
   asset: string;
   displayAmount: string;
-  receivedDisplayAmount: string;
   status: string;
   createdAt: number;
-  settledAt: number | null;
 };
 
 const paymentReceived = (status: string) => status === "succeeded" || status === "exact_pending" || status === "overpaid";
@@ -113,6 +111,7 @@ export function BillingPage({ onQuota }: { onQuota?: (quota: Quota) => void }) {
 
   const pro = quota?.plan === "pro";
   const assetLabel = invoice ? labelFor(invoice.chain, invoice.asset) : "";
+  const pastPayments = payments.filter((payment) => payment.id !== invoice?.id);
 
   return (
     <section className="page-grid">
@@ -158,10 +157,10 @@ export function BillingPage({ onQuota }: { onQuota?: (quota: Quota) => void }) {
         )}
         <section className="past-payments" aria-label="Past payments">
           <div className="eyebrow">past payments</div>
-          {payments.length === 0 ? (
+          {pastPayments.length === 0 ? (
             <p>No payments yet.</p>
           ) : (
-            payments.map((payment) => (
+            pastPayments.map((payment) => (
               <div className="ledger-line" key={payment.id}>
                 <span>{new Date(payment.createdAt).toISOString().slice(0, 10)} · {payment.chain} · {labelFor(payment.chain, payment.asset)} · {payment.status}</span>
                 <strong>{payment.displayAmount}</strong>
