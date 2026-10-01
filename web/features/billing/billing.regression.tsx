@@ -198,8 +198,9 @@ try {
     const refreshed = root.querySelector(".past-payments")?.textContent ?? "";
     assert.match(refreshed, /succeeded/, "the poll refreshes past payments");
     assert.match(refreshed, /2026-03-01/, "a prior settled invoice appears in past payments");
+    assert.match(refreshed, /2026-04-02/, "the just-paid active invoice now appears in past payments");
+    assert.equal((refreshed.match(/15\.000000/g) ?? []).length, 2, "both paid invoices list their amount");
     assert.doesNotMatch(refreshed, /open/, "no stale open status remains");
-    assert.match(refreshed, /15\.000000/);
   } finally {
     window.setInterval = realSetInterval;
   }

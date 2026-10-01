@@ -113,8 +113,9 @@ export function BillingPage({ onQuota }: { onQuota?: (quota: Quota) => void }) {
   };
 
   const pro = quota?.plan === "pro";
+  const activeUnpaid = invoice && !pro && !paymentReceived(invoice.status) ? invoice.id : null;
   const assetLabel = invoice ? labelFor(invoice.chain, invoice.asset) : "";
-  const pastPayments = payments.filter((payment) => payment.id !== invoice?.id);
+  const pastPayments = payments.filter((payment) => payment.id !== activeUnpaid);
 
   return (
     <section className="page-grid">
