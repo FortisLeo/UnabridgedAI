@@ -21,10 +21,11 @@ export function Sidebar({
   onNewSession: () => void;
   onOpenChat: (id: string) => void;
   onChangeView: (view: View) => void;
-  onChatsChange: (update: (chats: ChatSummary[]) => ChatSummary[]) => void;
-  onChatRemoved: (id: string) => void;
+  onChatsChange?: (update: (chats: ChatSummary[]) => ChatSummary[]) => void;
+  onChatRemoved?: (id: string) => void;
 }) {
   const [query, setQuery] = useState("");
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [menu, setMenu] = useState<MenuState | null>(null);
   const [pendingDelete, setPendingDelete] = useState<ChatSummary | null>(null);
   const [actionError, setActionError] = useState("");
@@ -73,7 +74,7 @@ export function Sidebar({
       body: JSON.stringify({ pinned: Boolean(pinned) }),
     });
     const next = data.chat ?? { ...chat, pinned };
-    onChatsChange((items) =>
+    onChatsChange?.((items) =>
       items
         .map((item) => (item.id === chat.id ? { ...item, ...next } : item))
         .sort((a, b) => Number(b.pinned ?? 0) - Number(a.pinned ?? 0) || b.updated_at - a.updated_at),
@@ -89,15 +90,27 @@ export function Sidebar({
   const removeChat = async (chat: ChatSummary) => {
     setActionError("");
     await api(`/api/chats/${chat.id}`, { method: "DELETE" });
-    onChatsChange((items) => items.filter((item) => item.id !== chat.id));
-    onChatRemoved(chat.id);
+    onChatsChange?.((items) => items.filter((item) => item.id !== chat.id));
+    onChatRemoved?.(chat.id);
     setPendingDelete(null);
   };
 
+  const closeDrawer = () => setDrawerOpen(false);
+
   return (
-    <aside>
+    <>
+      <button
+        className={`menu-trigger ${drawerOpen ? "is-open" : ""}`}
+        onClick={() => setDrawerOpen((open) => !open)}
+        aria-label={drawerOpen ? "Close menu" : "Open menu"}
+        aria-expanded={drawerOpen}
+      >
+        <span /><span /><span />
+      </button>
+      {drawerOpen && <button className="menu-backdrop" aria-label="Close menu" onClick={closeDrawer} />}
+      <aside className={drawerOpen ? "drawer-open" : ""}>
       <div className="brand"><span className="brand-mark">UA</span><span>UnabridgedAI</span></div>
-      <button className="new-session" onClick={onNewSession}>↗ New session</button>
+      <button className="new-session" onClick={() => { closeDrawer(); onNewSession(); }}>↗ New session</button>
       <div className="status"><i /> private mode <small>v0.2</small></div>
       <label className="session-search">
         <span className="chat-list-label">search sessions</span>
@@ -122,7 +135,7 @@ export function Sidebar({
             className={chat.id === activeChatId && view === "chat" ? "active" : ""}
             aria-current={chat.id === activeChatId && view === "chat" ? "true" : undefined}
             aria-haspopup="menu"
-            onClick={() => onOpenChat(chat.id)}
+            onClick={() => { closeDrawer(); onOpenChat(chat.id); }}
             onContextMenu={(event) => openMenu(chat, event)}
           >
             <strong>{chat.pinned ? "📌 " : ""}{chat.title}</strong>
@@ -159,13 +172,16 @@ export function Sidebar({
           </div>
         </div>
       )}
-      <nav>
-        <button className={view === "settings" ? "active" : ""} onClick={() => onChangeView("settings")}><span>⚙</span> Settings</button>
-        <button className={view === "billing" ? "active" : ""} onClick={() => onChangeView("billing")}><span>◈</span> Billing</button>
-        <button className={view === "api" ? "active" : ""} onClick={() => onChangeView("api")}><span>⌘</span> Get API</button>
-      </nav>
       <div className="side-note">history stays on your account.<br />search is opt-in per message.</div>
-      <button className="signout" onClick={async () => { await api("/api/auth/signout", { method: "POST" }); location.reload(); }} title="Signs out the current session">sign out <span>↘</span></button>
+      <div className="sidebar-bottom">
+        <nav>
+          <button className={view === "settings" ? "active" : ""} onClick={() => { closeDrawer(); onChangeView("settings"); }}><span>⚙</span> Settings</button>
+          <button className={view === "billing" ? "active" : ""} onClick={() => { closeDrawer(); onChangeView("billing"); }}><span>◈</span> Billing</button>
+          <button className={view === "api" ? "active" : ""} onClick={() => { closeDrawer(); onChangeView("api"); }}><span>⌘</span> Get API</button>
+        </nav>
+        <button className="signout" onClick={async () => { await api("/api/auth/signout", { method: "POST" }); location.reload(); }} title="Signs out the current session">sign out <span>↘</span></button>
+      </div>
     </aside>
+    </>
   );
 }
