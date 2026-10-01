@@ -76,7 +76,17 @@ assert.equal(classify(invoice, [credit], 2_000, true), "succeeded");
 assert.equal(classify(invoice, [credit], 2_000, false), "exact_pending");
 assert.equal(classify(invoice, [credit, { ...credit, id: "pending", tx_hash: "0x2", settled: 0, base_units: "1" }], 2_000, true), "overpaid");
 assert.equal(classify(invoice, [{ ...credit, base_units: "14999999" }], 2_000, true), "underpaid");
-assert.equal(classify(invoice, [{ ...credit, base_units: "15000001" }], 2_000, true), "overpaid");
+assert.equal(classify(invoice, [{ ...credit, base_units: "15000001" }], 2_000, true), "succeeded");
+const extra = (id: string, hash: string, units = "10000") => ({ ...credit, id, tx_hash: hash, base_units: units });
+const polygon = { ...invoice, chain: "polygon" as const, asset: "usdc" as const, expected_base_units: "10000" };
+const fourCredits = [extra("c1", "0xa"), extra("c2", "0xb"), extra("c3", "0xc"), extra("c4", "0xd")];
+assert.equal(classify(polygon, fourCredits, 2_000, true), "succeeded");
+assert.equal(classify(polygon, fourCredits.slice(0, 1), 2_000, true), "succeeded");
+assert.equal(classify(polygon, fourCredits, 2_000, false), "overpaid");
+assert.equal(classify(polygon, [extra("short", "0xe", "9999")], 2_000, true), "underpaid");
+assert.equal(classify(polygon, fourCredits.map((item) => ({ ...item, settled: 0 })), 2_000, true), "overpaid");
+assert.equal(classify(polygon, [...fourCredits, { ...extra("dust", "0xf", "1"), settled: 0 }], 2_000, true), "overpaid");
+assert.equal(classify(polygon, [extra("c1", "0xa"), extra("c2", "0xb", "1")], 2_000, true), "succeeded");
 assert.equal(classify(invoice, [{ ...credit, wrong_asset: 1, base_units: "15000000", settled: 0 }], 2_000, true), "wrong_asset");
 assert.equal(classify(invoice, [{ ...credit, settled: 0 }], 2_000, true), "exact_pending");
 assert.equal(classify({ ...invoice, qr_expires_at: 100 }, [], 2_000, true), "expired_unpaid");
@@ -91,7 +101,45 @@ assert.equal(deriveEvmAddress(xpub, 0), first);
 assert.throws(() => deriveEvmAddress(xpub.replace("xpub", "xprv"), 0));
 
 const { db, closeDb } = await import("../db/client.ts");
+const { applySettlement } = await import("./settle.ts");
 const { takeIndex } = await import("./store.ts");
+
+const payer = "overpay-user";
+db.prepare("INSERT INTO users (id, username, password_hash, plan, created_at) VALUES (?, 'overpay', 'x', 'free', 1)").run(payer);
+const depositAddress = "0x3333333333333333333333333333333333333333";
+db.prepare("INSERT INTO payment_addresses (address, family, derivation_index, ata, state, created_at) VALUES (?, 'evm', 8, NULL, 'assigned', 1)").run(depositAddress);
+db.prepare(
+  `INSERT INTO payment_invoices (
+    id, user_id, chain, asset, token_contract, expected_base_units, address, derivation_index, status,
+    qr_expires_at, created_at, updated_at
+  ) VALUES ('0211316c-6b7f-4231-b3a0-2cd348e0467d', ?, 'polygon', 'usdc', '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', '10000', ?, 8, 'open', 9000, 1, 1)`,
+).run(payer, depositAddress);
+const insertCredit = (id: string, hash: string, units: string, settled: number) => {
+  db.prepare(
+    `INSERT INTO payment_credits (
+      id, invoice_id, chain, tx_hash, output_index, base_units, height, confirmations, locked, wrong_asset, settled, first_seen_at, settled_at, credit_key
+    ) VALUES (?, '0211316c-6b7f-4231-b3a0-2cd348e0467d', 'polygon', ?, 0, ?, 10, 100, 0, 0, ?, 100, ?, ?)`,
+  ).run(id, hash, units, settled, settled ? 100 : null, `polygon:${hash}:0:`);
+};
+insertCredit("short", "0xshort", "9999", 1);
+const storedInvoice = () => db.prepare("SELECT * FROM payment_invoices WHERE id = '0211316c-6b7f-4231-b3a0-2cd348e0467d'").get() as typeof invoice;
+const storedCredits = () => db.prepare("SELECT * FROM payment_credits WHERE invoice_id = '0211316c-6b7f-4231-b3a0-2cd348e0467d'").all() as Array<typeof credit>;
+assert.equal(applySettlement(storedInvoice(), storedCredits(), 2_000, true).granted, false);
+assert.equal((db.prepare("SELECT plan FROM users WHERE id = ?").get(payer) as { plan: string }).plan, "free");
+db.prepare("DELETE FROM payment_credits WHERE id = 'short'").run();
+for (const [id, hash] of [["c1", "0xa"], ["c2", "0xb"], ["c3", "0xc"], ["c4", "0xd"]] as const) insertCredit(id, hash, "10000", 0);
+assert.equal(applySettlement(storedInvoice(), storedCredits(), 2_000, true).status, "overpaid");
+assert.equal((db.prepare("SELECT plan FROM users WHERE id = ?").get(payer) as { plan: string }).plan, "free");
+db.prepare("UPDATE payment_credits SET settled = 1, settled_at = 100 WHERE invoice_id = '0211316c-6b7f-4231-b3a0-2cd348e0467d'").run();
+assert.equal(applySettlement(storedInvoice(), storedCredits(), 2_000, false).status, "overpaid");
+assert.equal((db.prepare("SELECT plan FROM users WHERE id = ?").get(payer) as { plan: string }).plan, "free");
+const settled = applySettlement(storedInvoice(), storedCredits(), 2_000, true);
+assert.equal(settled.status, "succeeded");
+assert.equal(settled.granted, true);
+assert.equal((db.prepare("SELECT plan FROM users WHERE id = ?").get(payer) as { plan: string }).plan, "pro");
+const grantAt = (db.prepare("SELECT grant_applied_at FROM payment_invoices WHERE id = '0211316c-6b7f-4231-b3a0-2cd348e0467d'").get() as { grant_applied_at: number }).grant_applied_at;
+assert.equal(applySettlement(storedInvoice(), storedCredits(), 3_000, true).granted, true);
+assert.equal((db.prepare("SELECT grant_applied_at FROM payment_invoices WHERE id = '0211316c-6b7f-4231-b3a0-2cd348e0467d'").get() as { grant_applied_at: number }).grant_applied_at, grantAt);
 assert.equal(takeIndex("monero"), 1);
 assert.equal((db.prepare("SELECT next_index FROM address_counters WHERE family = 'monero'").get() as { next_index: number }).next_index, 2);
 const { sweepCandidates, markSwept, recordSweep } = await import("./store.ts");
@@ -105,7 +153,7 @@ db.prepare(
     qr_expires_at, created_at, updated_at, grant_applied_at
   ) VALUES ('sweep-inv', ?, 'polygon', 'usdc', '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', '10000', ?, 7, 'succeeded', 2, 1, 1, 1)`,
 ).run(sweptUser, deposit);
-assert.equal(sweepCandidates("polygon").length, 1);
+assert.equal(sweepCandidates("polygon").some((candidate) => candidate.id === "sweep-inv"), true);
 assert.equal(sweepCandidates("ethereum").length, 0);
 recordSweep({
   id: "sweep-1",
@@ -125,7 +173,7 @@ recordSweep({
 });
 assert.equal(markSwept("sweep-inv", "0xabc", 4), true);
 assert.equal(markSwept("sweep-inv", "0xdef", 5), false);
-assert.equal(sweepCandidates("polygon").length, 0);
+assert.equal(sweepCandidates("polygon").some((candidate) => candidate.id === "sweep-inv"), false);
 const addressState = db.prepare("SELECT state FROM payment_addresses WHERE address = ?").get(deposit) as { state: string };
 assert.equal(addressState.state, "swept");
 const nextIndex = takeIndex("evm");
