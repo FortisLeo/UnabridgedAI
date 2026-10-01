@@ -21,7 +21,7 @@ export function Sidebar({
   onNewSession: () => void;
   onOpenChat: (id: string) => void;
   onChangeView: (view: View) => void;
-  onChatsChange: (chats: ChatSummary[]) => void;
+  onChatsChange: (update: (chats: ChatSummary[]) => ChatSummary[]) => void;
   onChatRemoved: (id: string) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -73,8 +73,8 @@ export function Sidebar({
       body: JSON.stringify({ pinned: Boolean(pinned) }),
     });
     const next = data.chat ?? { ...chat, pinned };
-    onChatsChange(
-      chats
+    onChatsChange((items) =>
+      items
         .map((item) => (item.id === chat.id ? { ...item, ...next } : item))
         .sort((a, b) => Number(b.pinned ?? 0) - Number(a.pinned ?? 0) || b.updated_at - a.updated_at),
     );
@@ -89,7 +89,7 @@ export function Sidebar({
   const removeChat = async (chat: ChatSummary) => {
     setActionError("");
     await api(`/api/chats/${chat.id}`, { method: "DELETE" });
-    onChatsChange(chats.filter((item) => item.id !== chat.id));
+    onChatsChange((items) => items.filter((item) => item.id !== chat.id));
     onChatRemoved(chat.id);
     setPendingDelete(null);
   };
