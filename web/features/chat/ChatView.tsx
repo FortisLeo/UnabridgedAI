@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../../lib/api.ts";
+import { inputTokenCount } from "../../lib/token-count.ts";
 import { settingsSaves } from "../../lib/settings-saves.ts";
 import { Markdown } from "../../lib/markdown.tsx";
 import { mergeSettingsPatch, type ChatSummary, type Message, type Quota, type Settings } from "../../types.ts";
@@ -30,6 +31,7 @@ export function ChatView({
   const [busy, setBusy] = useState(false);
   const [webSearch, setWebSearch] = useState(settings.webSearch);
   const [darkWebSearch, setDarkWebSearch] = useState(settings.darkWebSearch);
+  const [inputError, setInputError] = useState("");
   const scroller = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -52,6 +54,14 @@ export function ChatView({
   const send = async () => {
     if (!input.trim() || busy || (quota?.plan === "free" && quota.remaining === 0)) return;
     const content = input.trim();
+    if (quota?.plan === "free" && (quota.requestsUsed ?? 0) < 3) {
+      const tokenCount = inputTokenCount(content);
+      if (tokenCount > 500) {
+        setInputError(`Your first 3 messages are limited to 500 input tokens. This message is ${tokenCount} tokens.`);
+        return;
+      }
+    }
+    setInputError("");
     setInput("");
     setMessages((current) => [...current, { role: "user", content }, { role: "assistant", content: "" }]);
     setBusy(true);
@@ -124,6 +134,12 @@ export function ChatView({
           return copy;
         });
       } else {
+        if (error instanceof ApiError && error.code === "INPUT_TOKEN_LIMIT") {
+          setInputError(error.message);
+          setInput(content);
+          setMessages((current) => current.slice(0, -2));
+          return;
+        }
         setMessages((current) => {
           const copy = [...current];
           const last = copy[copy.length - 1];
@@ -198,9 +214,20 @@ export function ChatView({
             }}
           >dark web search</button>
         </div>
+        {inputError && <div className="input-error" role="alert">{inputError}</div>}
         <textarea
           value={input}
-          onChange={(event) => setInput(event.target.value)}
+          aria-invalid={Boolean(inputError)}
+          onChange={(event) => {
+            const next = event.target.value;
+            setInput(next);
+            if (quota?.plan === "free" && (quota.requestsUsed ?? 0) < 3 && next.trim()) {
+              const tokenCount = inputTokenCount(next.trim());
+              setInputError(tokenCount > 500 ? `Your first 3 messages are limited to 500 input tokens. This message is approximately ${tokenCount} tokens.` : "");
+            } else {
+              setInputError("");
+            }
+          }}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();

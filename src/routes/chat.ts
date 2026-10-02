@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { randomUUID } from "../lib/crypto.ts";
 import { publicError } from "../lib/errors.ts";
+import { inputTokenCount } from "../lib/token-count.ts";
 import { titleFrom } from "../lib/http.ts";
 import { chatGuard } from "../middleware/security.ts";
 import { listHistory, ownedChat, persistTurn } from "../repositories/chats.ts";
@@ -33,6 +34,17 @@ chatRouter.post("/", chatGuard, async (req, res) => {
   const userId = userIdOf(req);
   const user = getUserUsage(userId);
   if (!user) return res.status(401).json({ error: "Sign in required" });
+
+  const tokenCount = inputTokenCount(parsed.data.content);
+  const freeRequestsActive = user.plan === "free" && user.requests_used < 3;
+  if (freeRequestsActive && tokenCount > 500) {
+    return res.status(400).json({
+      error: `Your first 3 messages are limited to 500 input tokens. This message is ${tokenCount} tokens.`,
+      code: "INPUT_TOKEN_LIMIT",
+      tokenCount,
+      tokenLimit: 500,
+    });
+  }
 
   const settings = getSettings(userId);
   const persist = Boolean(settings.save_history) && !settings.temporary_chat;
