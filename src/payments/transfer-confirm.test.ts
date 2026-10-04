@@ -39,6 +39,8 @@ process.env.POLYGON_COLD_ADDRESS = cold;
 
 const { db, closeDb } = await import("../db/client.ts");
 const { confirmTransfer, TransferError } = await import("./transfers.ts");
+const { confirmBroadcastSweeps } = await import("./evm-sweep.ts");
+const { recordAddressSweep, broadcastAddressSweep } = await import("./address-sweeps.ts");
 db.exec(`CREATE TABLE IF NOT EXISTS payment_transfers (
   id TEXT PRIMARY KEY, invoice_id TEXT NOT NULL, chain TEXT NOT NULL, status TEXT NOT NULL, to_address TEXT NOT NULL,
   base_units TEXT NOT NULL, unsigned_tx TEXT, tx_hash TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
@@ -57,6 +59,21 @@ assert.equal((db.prepare("SELECT state FROM payment_addresses WHERE derivation_i
 assert.equal((db.prepare("SELECT state FROM payment_address_leases WHERE invoice_id = 'paid'").get() as { state: string }).state, "swept");
 const { availableEvmIndex } = await import("./store.ts");
 assert.equal(availableEvmIndex("polygon", 60_000), 9);
+
+// The batch/CLI path confirms a broadcast sweep only once the receipt shows the funds at cold.
+const cliAddress = "0x4444444444444444444444444444444444444444";
+db.exec("INSERT INTO payment_addresses (address, family, derivation_index, ata, state, created_at) VALUES ('" + cliAddress + "', 'evm', 11, NULL, 'assigned', 1)");
+db.prepare("INSERT INTO payment_invoices (id, user_id, chain, asset, token_contract, expected_base_units, address, derivation_index, status, qr_expires_at, created_at, updated_at, grant_applied_at) VALUES ('cli-paid', 'payer', 'polygon', 'usdc', ?, '10000', ?, 11, 'succeeded', 2, 1, 1, 1)").run(token, cliAddress);
+db.prepare("INSERT INTO payment_address_leases (address, chain, invoice_id, state, leased_at, expires_at) VALUES (?, 'polygon', 'cli-paid', 'paid_pending_sweep', 1, 2)").run(cliAddress);
+recordAddressSweep({ id: "cli-sweep", chain: "polygon", asset: "usdc", token_contract: token, from_address: cliAddress, derivation_index: 11, to_address: cold, base_units: "10000", nonce: 0, gas_price: "1", gas_limit: 80_000, unsigned_tx: "0xcli", created_at: 4 });
+broadcastAddressSweep("cli-sweep", "0xfeed", 5);
+includeLog = false;
+assert.equal(await confirmBroadcastSweeps("polygon", 6), 0);
+assert.equal((db.prepare("SELECT state FROM payment_address_leases WHERE invoice_id = 'cli-paid'").get() as { state: string }).state, "paid_pending_sweep");
+includeLog = true;
+assert.equal(await confirmBroadcastSweeps("polygon", 7), 1);
+assert.equal((db.prepare("SELECT state FROM payment_address_leases WHERE invoice_id = 'cli-paid'").get() as { state: string }).state, "swept");
+assert.notEqual((db.prepare("SELECT confirmed_at FROM payment_address_sweeps WHERE id = 'cli-sweep'").get() as { confirmed_at: number | null }).confirmed_at, null);
 await new Promise<void>((resolve) => rpc.close(() => resolve()));
 closeDb();
 console.log("transfer confirmation test passed");

@@ -3,9 +3,9 @@ import { env } from "../lib/env.ts";
 import { db } from "../db/client.ts";
 import { randomUUID } from "../lib/crypto.ts";
 import { chainIdOf } from "./allowlist.ts";
-import { balanceOf, createJsonRpc, evmChainId, type JsonRpc } from "./chain.ts";
+import { balanceOf, createJsonRpc, evmChainId, getReceipt, type JsonRpc } from "./chain.ts";
 import { addressPoolRows } from "./store.ts";
-import { broadcastAddressSweep, ensureAddressSweepTable, newSweepId, pendingAddressSweep, recordAddressSweep } from "./address-sweeps.ts";
+import { broadcastAddressSweep, confirmAddressSweep, ensureAddressSweepTable, newSweepId, pendingAddressSweep, recordAddressSweep } from "./address-sweeps.ts";
 
 const TRANSFER_SELECTOR = "a9059cbb";
 const GAS_LIMIT = 80_000;
@@ -178,7 +178,33 @@ export const broadcastSweep = async (plan: SweepPlan, now = Date.now()) => {
   return txHash;
 };
 
+export const confirmBroadcastSweeps = async (chain: "polygon" | "ethereum", now = Date.now()) => {
+  ensureAddressSweepTable();
+  const pending = db.prepare("SELECT id, broadcast_tx, token_contract, to_address, base_units FROM payment_address_sweeps WHERE chain = ? AND broadcast_tx IS NOT NULL AND confirmed_at IS NULL").all(chain) as Array<{
+    id: string;
+    broadcast_tx: string;
+    token_contract: string;
+    to_address: string;
+    base_units: string;
+  }>;
+  if (pending.length === 0) return 0;
+  const rpc = rpcFor(chain);
+  let confirmed = 0;
+  for (const sweep of pending) {
+    const receipt = await getReceipt(rpc, sweep.broadcast_tx);
+    const moved = receipt?.status
+      ? receipt.logs
+          .filter((log) => log.contract === sweep.token_contract.toLowerCase() && log.to === sweep.to_address.toLowerCase())
+          .reduce((sum, log) => sum + log.value, 0n)
+      : 0n;
+    if (!receipt?.status || moved < BigInt(sweep.base_units)) continue;
+    if (confirmAddressSweep(sweep.id, now)) confirmed += 1;
+  }
+  return confirmed;
+};
+
 export const runSweep = async (chain: "polygon" | "ethereum", now = Date.now()) => {
+  await confirmBroadcastSweeps(chain, now);
   const plans = await planSweeps(chain, now);
   const sent: Array<{ sweepId: string; txHash: string }> = [];
   for (const plan of plans) sent.push({ sweepId: plan.sweepId, txHash: await broadcastSweep(plan, now) });

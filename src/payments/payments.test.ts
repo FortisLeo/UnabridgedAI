@@ -210,6 +210,20 @@ assert.equal((db.prepare("SELECT state FROM payment_addresses WHERE address = ?"
 const nextIndex = takeIndex("evm");
 assert.notEqual(nextIndex, 4);
 clearPool(4);
+
+// A legacy funded address with no lease row is quarantined into the lease table so it cannot be reused unswept.
+const { backfillLegacyLeases } = await import("../db/client.ts");
+const legacyFunded = poolAddress(20);
+ensureEvmAddress(legacyFunded, 20, 1);
+db.prepare(
+  `INSERT INTO payment_invoices (id, user_id, chain, asset, token_contract, expected_base_units, address, derivation_index, status, qr_expires_at, created_at, updated_at)
+   VALUES ('pool-20', ?, 'ethereum', 'usdc', '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', '15000000', ?, 20, 'succeeded', 60_000, 1, 1)`,
+).run(poolUser, legacyFunded);
+backfillLegacyLeases();
+const backfilled = db.prepare("SELECT state FROM payment_address_leases WHERE address = ? AND chain = 'ethereum'").get(legacyFunded) as { state: string } | undefined;
+assert.equal(backfilled?.state, "paid_pending_sweep");
+assert.notEqual(availableEvmIndex("ethereum", 60_000 + 60 * 60 * 1000), 20);
+clearPool(20);
 closeDb();
 
 console.log("payment tests passed");
