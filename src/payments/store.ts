@@ -51,6 +51,9 @@ export type CreditRow = {
 };
 
 const OPEN_FOR_CREATE = ["open", "underpaid", "exact_pending", "overpaid"];
+export const EVM_POOL_SIZE = 30;
+export const EVM_LEASE_MS = 30 * 60 * 1000;
+export const EVM_QUARANTINE_MS = 2 * 60 * 60 * 1000;
 
 export const blockingInvoice = (userId: string) =>
   db
@@ -77,13 +80,40 @@ export const insertSkipped = (family: "evm" | "solana" | "monero", index: number
   );
 };
 
+export const availableEvmIndex = (chain: string, now: number) => {
+  db.prepare("UPDATE payment_address_leases SET state = 'quarantined', quarantine_until = ? WHERE chain = ? AND state = 'leased' AND expires_at <= ?").run(now + EVM_QUARANTINE_MS, chain, now);
+  const row = db.prepare(`SELECT a.derivation_index FROM payment_addresses a
+    LEFT JOIN payment_address_leases l ON l.address = a.address AND l.chain = ?
+    WHERE a.family = 'evm' AND a.derivation_index < ?
+      AND (l.address IS NULL OR l.state = 'swept' OR (l.state = 'quarantined' AND l.quarantine_until <= ?))
+    ORDER BY a.derivation_index ASC LIMIT 1`).get(chain, EVM_POOL_SIZE, now) as { derivation_index: number } | undefined;
+  return row?.derivation_index ?? null;
+};
+
+export const ensureEvmAddress = (address: string, index: number, now: number) => {
+  db.prepare("INSERT OR IGNORE INTO payment_addresses (address, family, derivation_index, ata, state, created_at) VALUES (?, 'evm', ?, NULL, 'available', ?)").run(address, index, now);
+};
+
+export const leaseEvmAddress = (address: string, chain: string, invoiceId: string, now: number) => {
+  db.prepare(`INSERT INTO payment_address_leases (address, chain, invoice_id, state, leased_at, expires_at)
+    VALUES (?, ?, ?, 'leased', ?, ?)
+    ON CONFLICT(address, chain) DO UPDATE SET invoice_id = excluded.invoice_id, state = 'leased', leased_at = excluded.leased_at, expires_at = excluded.expires_at, quarantine_until = NULL`).run(address, chain, invoiceId, now, now + EVM_LEASE_MS);
+  db.prepare("UPDATE payment_addresses SET state = 'assigned', lease_expires_at = ?, reusable_at = NULL WHERE address = ?").run(now + EVM_LEASE_MS, address);
+};
+
+export const releaseEvmLease = (invoiceId: string, paid: boolean, now: number) => {
+  db.prepare("UPDATE payment_address_leases SET state = ?, quarantine_until = ? WHERE invoice_id = ?").run(paid ? "paid_pending_sweep" : "quarantined", paid ? null : now + EVM_QUARANTINE_MS, invoiceId);
+  if (!paid) db.prepare("UPDATE payment_addresses SET state = 'quarantined', reusable_at = ? WHERE address = (SELECT address FROM payment_invoices WHERE id = ?)").run(now + EVM_QUARANTINE_MS, invoiceId);
+};
+
 export const insertAddress = (address: string, family: "evm" | "solana" | "monero", index: number, ata: string | null, now: number) => {
-  db.prepare("INSERT INTO payment_addresses (address, family, derivation_index, ata, state, created_at) VALUES (?, ?, ?, ?, 'reserved', ?)").run(
+  db.prepare("INSERT INTO payment_addresses (address, family, derivation_index, ata, state, created_at, lease_expires_at) VALUES (?, ?, ?, ?, 'reserved', ?, ?)").run(
     address,
     family,
     index,
     ata,
     now,
+    now + 30 * 60 * 1000,
   );
 };
 
@@ -216,8 +246,27 @@ export const evmAddresses = () =>
     derivation_index: number;
   }>;
 
-export const invoiceByAddress = (address: string) =>
-  db.prepare("SELECT * FROM payment_invoices WHERE lower(address) = lower(?)").get(address) as InvoiceRow | undefined;
+export const invoiceByAddress = (address: string, chain?: string) =>
+  (chain
+    ? db.prepare("SELECT * FROM payment_invoices WHERE lower(address) = lower(?) AND chain = ? AND status NOT IN ('succeeded', 'expired_unpaid', 'refunded') ORDER BY created_at DESC LIMIT 1").get(address, chain)
+    : db.prepare("SELECT * FROM payment_invoices WHERE lower(address) = lower(?) ORDER BY created_at DESC LIMIT 1").get(address)) as InvoiceRow | undefined;
+
+export const paymentAddressExists = (address: string) => Boolean(db.prepare("SELECT 1 FROM payment_addresses WHERE lower(address) = lower(?)").get(address));
+
+export const recordUnmatchedTransfer = (input: { chain: string; asset: string; tokenContract: string | null; txHash: string; outputIndex: number; toAddress: string; fromAddress: string | null; baseUnits: string; now: number }) => {
+  db.prepare(`INSERT OR IGNORE INTO unmatched_transfers
+    (id, chain, asset, token_contract, tx_hash, output_index, to_address, from_address, base_units, first_seen_at, status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unreviewed')`).run(
+    randomUUID(), input.chain, input.asset, input.tokenContract, input.txHash, input.outputIndex, input.toAddress, input.fromAddress, input.baseUnits, input.now,
+  );
+};
+
+export const recordChainHealth = (chain: string, status: string, error: string | null, blockHeight: number | null, now = Date.now()) => {
+  db.prepare(`INSERT INTO chain_health (chain, status, last_success_at, last_error, block_height, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(chain) DO UPDATE SET status = excluded.status, last_success_at = excluded.last_success_at, last_error = excluded.last_error, block_height = excluded.block_height, updated_at = excluded.updated_at`).run(
+    chain, status, status === "ok" ? now : null, error, blockHeight, now,
+  );
+};
 
 export const ataOf = (address: string) =>
   (db.prepare("SELECT ata FROM payment_addresses WHERE address = ?").get(address) as { ata: string | null } | undefined)?.ata ?? null;
@@ -272,12 +321,15 @@ export const recordSweep = (input: {
   );
 };
 
+export const addressPoolRows = (now = Date.now()) => db.prepare(`SELECT a.*, l.chain AS lease_chain, l.invoice_id AS lease_invoice_id, l.state AS lease_state, l.expires_at AS lease_expires_at, l.quarantine_until FROM payment_addresses a LEFT JOIN payment_address_leases l ON l.address = a.address ORDER BY a.family, a.derivation_index, l.chain`).all(now);
+
 export const markSwept = (invoiceId: string, txHash: string, now: number) => {
   const changed = db
     .prepare("UPDATE payment_invoices SET swept_at = ?, sweep_tx = ?, updated_at = ? WHERE id = ? AND swept_at IS NULL")
     .run(now, txHash, now, invoiceId);
   if (changed.changes !== 1) return false;
   db.prepare("UPDATE payment_sweeps SET broadcast_tx = ?, broadcast_at = ? WHERE invoice_id = ? AND broadcast_tx IS NULL").run(txHash, now, invoiceId);
-  db.prepare("UPDATE payment_addresses SET state = 'swept' WHERE address = (SELECT address FROM payment_invoices WHERE id = ?)").run(invoiceId);
+  db.prepare("UPDATE payment_addresses SET state = 'swept', reusable_at = NULL WHERE address = (SELECT address FROM payment_invoices WHERE id = ?)").run(invoiceId);
+  db.prepare("UPDATE payment_address_leases SET state = 'swept' WHERE invoice_id = ?").run(invoiceId);
   return true;
 };

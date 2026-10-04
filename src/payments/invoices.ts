@@ -14,8 +14,11 @@ import {
   creditsFor,
   getInvoice,
   invoicesForUser,
+  availableEvmIndex,
+  ensureEvmAddress,
   insertAddress,
   insertInvoice,
+  leaseEvmAddress,
   insertSkipped,
   priceOf,
   setRefundAddress,
@@ -48,11 +51,16 @@ export const createInvoice = async (userId: string, pair: AllowlistEntry, now = 
   if (family === "solana" && !solanaConfigured()) throw new InvoiceError(503, "Payments are not available.");
   if (family === "monero" && !moneroConfigured()) throw new InvoiceError(503, "Payments are not available.");
 
-  const reserved = db.transaction(() => takeIndex(family))();
+  const reserved = family === "evm" ? (availableEvmIndex(pair.chain, now) ?? db.transaction(() => takeIndex(family))()) : db.transaction(() => takeIndex(family))();
   try {
     const allocated = await allocate(family, reserved, pair, id);
     db.transaction(() => {
-      insertAddress(allocated.address, family, reserved, allocated.ata, now);
+      if (family === "evm") {
+        ensureEvmAddress(allocated.address, reserved, now);
+        leaseEvmAddress(allocated.address, pair.chain, id, now);
+      } else {
+        insertAddress(allocated.address, family, reserved, allocated.ata, now);
+      }
       insertInvoice({
         id,
         userId,
