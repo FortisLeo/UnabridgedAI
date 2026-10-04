@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS users (
   username TEXT UNIQUE NOT NULL,
   password_hash TEXT NOT NULL,
   plan TEXT NOT NULL DEFAULT 'free',
+  pro_expires_at INTEGER,
   requests_used INTEGER NOT NULL DEFAULT 0,
   signup_ip TEXT,
   created_at INTEGER NOT NULL,
@@ -67,8 +68,24 @@ CREATE TABLE IF NOT EXISTS payment_addresses (
   ata TEXT,
   state TEXT NOT NULL,
   created_at INTEGER NOT NULL,
+  lease_expires_at INTEGER,
+  reusable_at INTEGER,
+  last_balance_base_units TEXT,
+  last_checked_at INTEGER,
   UNIQUE (family, derivation_index)
 );
+CREATE TABLE IF NOT EXISTS payment_address_leases (
+  address TEXT NOT NULL,
+  chain TEXT NOT NULL,
+  invoice_id TEXT NOT NULL,
+  state TEXT NOT NULL,
+  leased_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  quarantine_until INTEGER,
+  PRIMARY KEY (address, chain),
+  UNIQUE (invoice_id)
+);
+CREATE INDEX IF NOT EXISTS payment_address_leases_state ON payment_address_leases (chain, state, expires_at);
 CREATE TABLE IF NOT EXISTS payment_invoices (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL,
@@ -173,6 +190,55 @@ CREATE TABLE IF NOT EXISTS payment_events (
   detail TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS payment_events_user ON payment_events (user_id, kind, at);
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  token_hash TEXT PRIMARY KEY,
+  expires_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS admin_audit_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  action TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  target TEXT,
+  detail TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS admin_withdrawals (
+  id TEXT PRIMARY KEY,
+  chain TEXT NOT NULL,
+  asset TEXT NOT NULL,
+  to_address TEXT NOT NULL,
+  base_units TEXT NOT NULL,
+  status TEXT NOT NULL,
+  requested_by TEXT NOT NULL,
+  approved_by TEXT,
+  tx_hash TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS chain_health (
+  chain TEXT PRIMARY KEY,
+  status TEXT NOT NULL,
+  last_success_at INTEGER,
+  last_error TEXT,
+  block_height INTEGER,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS unmatched_transfers (
+  id TEXT PRIMARY KEY,
+  chain TEXT NOT NULL,
+  asset TEXT NOT NULL,
+  token_contract TEXT,
+  tx_hash TEXT NOT NULL,
+  output_index INTEGER NOT NULL,
+  to_address TEXT NOT NULL,
+  from_address TEXT,
+  base_units TEXT NOT NULL,
+  first_seen_at INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'unreviewed',
+  UNIQUE (chain, tx_hash, output_index)
+);
+CREATE INDEX IF NOT EXISTS unmatched_transfers_status ON unmatched_transfers (status, first_seen_at);
 CREATE TABLE IF NOT EXISTS settings (
   user_id TEXT PRIMARY KEY,
   memory_enabled INTEGER NOT NULL DEFAULT 1,

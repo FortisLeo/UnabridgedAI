@@ -7,6 +7,7 @@ import { trustProxySetting } from "./lib/ip.ts";
 import { apiKeyAuth, auth } from "./middleware/auth.ts";
 import { blockBlacklistedIp } from "./middleware/security.ts";
 import { authRouter } from "./routes/auth.ts";
+import { adminRouter } from "./routes/admin.ts";
 import { billingRouter } from "./routes/billing.ts";
 import { chatRouter } from "./routes/chat.ts";
 import { chatsRouter } from "./routes/chats.ts";
@@ -51,6 +52,7 @@ export const createApp = () => {
   app.use("/api", blockBlacklistedIp);
 
   app.use("/api/auth", authRouter);
+  app.use("/api/admin", adminRouter);
   app.use("/api/me", auth, meRouter);
   app.use("/api/chats", auth, chatsRouter);
   app.use("/api/chat", auth, chatRouter);

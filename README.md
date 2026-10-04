@@ -43,6 +43,17 @@ docker compose up --build
 
 Data lives in the `unabridged-data` volume. The app listens on port 3001.
 
+## Admin console
+
+The read-only operations console is available at `/admin`. Configure separate admin credentials in `.env` before using it:
+
+```bash
+ADMIN_USERNAME=operator
+ADMIN_PASSWORD_HASH=$(npx tsx -e 'import { passwordHash } from "./src/lib/crypto.ts"; console.log(passwordHash(process.env.ADMIN_PASSWORD ?? "change-this"))' )
+```
+
+Set the hash from a secure shell environment, restart the service, and open `https://your-host/admin`. The console shows SQLite-backed users, invoices, credits, address states, payment settings, recent payment events, and RPC configuration. It does not expose private keys or fund-moving controls.
+
 ## Crypto invoices
 
 Pro can be bought with USDT or USDC on Ethereum, Polygon, and Solana, or with Monero. Ethereum and Polygon share one account xpub (`EVM_ACCOUNT_XPUB`, path `m/44'/60'/0'/0/i`). Solana uses an indexed list of pre-derived owner public keys (`SOLANA_OWNER_PUBKEYS`) because its derivation path is hardened. Monero uses one view-only `monero-wallet-rpc` on localhost. The web process never holds a spend key.
