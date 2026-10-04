@@ -53,7 +53,7 @@ export type CreditRow = {
 const OPEN_FOR_CREATE = ["open", "underpaid", "exact_pending", "overpaid"];
 export const EVM_POOL_SIZE = 30;
 export const EVM_LEASE_MS = 30 * 60 * 1000;
-export const EVM_QUARANTINE_MS = 2 * 60 * 60 * 1000;
+export const EVM_QUARANTINE_MS = 20 * 60 * 1000;
 
 export const blockingInvoice = (userId: string) =>
   db
