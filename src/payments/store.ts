@@ -89,9 +89,8 @@ export const availableEvmIndex = (chain: string, now: number) => {
         SELECT 1 FROM payment_invoices i
         WHERE lower(i.address) = lower(a.address) AND i.chain = ?
           AND (
-            i.status NOT IN ('succeeded', 'expired_unpaid', 'refunded')
+            (i.status NOT IN ('succeeded', 'expired_unpaid', 'refunded') AND i.qr_expires_at + ? > ?)
             OR (i.status = 'succeeded' AND i.swept_at IS NULL)
-            OR i.qr_expires_at + ? > ?
           )
       )
     ORDER BY a.derivation_index ASC LIMIT 1`).get(chain, EVM_POOL_SIZE, now, chain, EVM_QUARANTINE_MS, now) as { derivation_index: number } | undefined;

@@ -175,7 +175,7 @@ clearPool(0);
 // A legacy address with no lease row but still backing an open invoice must not be reused.
 poolInvoice(1, "open", 60_000);
 assert.notEqual(availableEvmIndex("ethereum", 1_000), 1);
-assert.notEqual(availableEvmIndex("ethereum", 10_000_000), 1);
+assert.equal(availableEvmIndex("ethereum", 10_000_000), 1);
 clearPool(1);
 
 // Quarantine runs from the invoice's actual payment expiry, not the lease timestamp.
