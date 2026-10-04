@@ -4,7 +4,7 @@ import { randomUUID } from "../lib/crypto.ts";
 import { chainIdOf } from "./allowlist.ts";
 import { createJsonRpc, evmChainId, getReceipt, type JsonRpc } from "./chain.ts";
 import { planSweeps, type SweepPlan } from "./evm-sweep.ts";
-import { confirmAddressSweep, ensureAddressSweepTable } from "./address-sweeps.ts";
+import { broadcastAddressSweep, confirmAddressSweep, ensureAddressSweepTable, markAddressSwept } from "./address-sweeps.ts";
 
 export class TransferError extends Error {
   code: string;
@@ -121,6 +121,9 @@ export const broadcastTransfer = async (id: string, now = Date.now()) => {
   const txHash = await rpc("eth_sendRawTransaction", [signed.signedTx]);
   if (typeof txHash !== "string") throw new TransferError("confirmation_pending", "RPC did not return a transaction hash");
   db.prepare("UPDATE payment_transfers SET status = 'broadcast', tx_hash = ?, updated_at = ? WHERE id = ?").run(txHash, now, id);
+  ensureAddressSweepTable();
+  const sweep = db.prepare("SELECT id FROM payment_address_sweeps WHERE unsigned_tx = ? AND broadcast_tx IS NULL").get(row.unsigned_tx) as { id: string } | undefined;
+  if (sweep) broadcastAddressSweep(sweep.id, txHash, now);
   return { id, status: "broadcast", txHash };
 };
 
@@ -140,7 +143,6 @@ export const confirmTransfer = async (id: string, now = Date.now()) => {
   db.prepare("UPDATE payment_transfers SET status = 'confirmed', updated_at = ? WHERE id = ?").run(now, id);
   ensureAddressSweepTable();
   const sweepId = db.prepare("SELECT id FROM payment_address_sweeps WHERE chain = ? AND lower(from_address) = lower(?) AND broadcast_tx = ?").get(chain, invoice.address, row.tx_hash) as { id: string } | undefined;
-  if (sweepId) confirmAddressSweep(sweepId.id, now);
-  else db.prepare("UPDATE payment_addresses SET state = 'swept' WHERE lower(address) = lower(?)").run(invoice.address);
+  if (!sweepId || !confirmAddressSweep(sweepId.id, now)) markAddressSwept(chain, invoice.address);
   return { id, status: "confirmed", receivedBaseUnits: moved.toString() };
 };

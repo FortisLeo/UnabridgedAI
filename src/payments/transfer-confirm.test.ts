@@ -46,6 +46,7 @@ db.exec(`CREATE TABLE IF NOT EXISTS payment_transfers (
 db.exec("INSERT INTO payment_addresses (address, family, derivation_index, ata, state, created_at) VALUES ('0x1111111111111111111111111111111111111111', 'evm', 9, NULL, 'assigned', 1)");
 db.prepare("INSERT INTO users (id, username, password_hash, plan, created_at) VALUES ('payer', 'payer', 'x', 'pro', 1)").run();
 db.prepare("INSERT INTO payment_invoices (id, user_id, chain, asset, token_contract, expected_base_units, address, derivation_index, status, qr_expires_at, created_at, updated_at, grant_applied_at) VALUES ('paid', 'payer', 'polygon', 'usdc', ?, '10000', '0x1111111111111111111111111111111111111111', 9, 'succeeded', 2, 1, 1, 1)").run(token);
+db.prepare("INSERT INTO payment_address_leases (address, chain, invoice_id, state, leased_at, expires_at) VALUES ('0x1111111111111111111111111111111111111111', 'polygon', 'paid', 'paid_pending_sweep', 1, 2)").run();
 db.prepare("INSERT INTO payment_transfers (id, invoice_id, chain, status, to_address, base_units, tx_hash, created_at, updated_at) VALUES ('transfer-1', 'paid', 'polygon', 'broadcast', ?, '10000', '0xabc', 1, 1)").run(cold);
 
 await assert.rejects(() => confirmTransfer("transfer-1", 2), (error: unknown) => error instanceof TransferError && error.code === "confirmation_pending");
@@ -53,6 +54,9 @@ includeLog = true;
 const confirmed = await confirmTransfer("transfer-1", 3);
 assert.equal(confirmed.status, "confirmed");
 assert.equal((db.prepare("SELECT state FROM payment_addresses WHERE derivation_index = 9").get() as { state: string }).state, "swept");
+assert.equal((db.prepare("SELECT state FROM payment_address_leases WHERE invoice_id = 'paid'").get() as { state: string }).state, "swept");
+const { availableEvmIndex } = await import("./store.ts");
+assert.equal(availableEvmIndex("polygon", 60_000), 9);
 await new Promise<void>((resolve) => rpc.close(() => resolve()));
 closeDb();
 console.log("transfer confirmation test passed");

@@ -88,10 +88,8 @@ export const availableEvmIndex = (chain: string, now: number) => {
       AND NOT EXISTS (
         SELECT 1 FROM payment_invoices i
         WHERE lower(i.address) = lower(a.address) AND i.chain = ?
-          AND (
-            (i.status NOT IN ('succeeded', 'expired_unpaid', 'refunded') AND i.qr_expires_at + ? > ?)
-            OR (i.status = 'succeeded' AND i.swept_at IS NULL)
-          )
+          AND i.status NOT IN ('succeeded', 'expired_unpaid', 'refunded')
+          AND i.qr_expires_at + ? > ?
       )
     ORDER BY a.derivation_index ASC LIMIT 1`).get(chain, EVM_POOL_SIZE, now, chain, EVM_QUARANTINE_MS, now) as { derivation_index: number } | undefined;
   return row?.derivation_index ?? null;
@@ -281,65 +279,4 @@ export const recordChainHealth = (chain: string, status: string, error: string |
 export const ataOf = (address: string) =>
   (db.prepare("SELECT ata FROM payment_addresses WHERE address = ?").get(address) as { ata: string | null } | undefined)?.ata ?? null;
 
-export type SweepCandidate = InvoiceRow & { token_contract: string };
-
-export const sweepCandidates = (chain: "polygon" | "ethereum") =>
-  db
-    .prepare(
-      `SELECT * FROM payment_invoices
-       WHERE chain = ? AND status = 'succeeded' AND grant_applied_at IS NOT NULL AND swept_at IS NULL AND token_contract IS NOT NULL
-       ORDER BY grant_applied_at ASC`,
-    )
-    .all(chain) as SweepCandidate[];
-
-export const recordSweep = (input: {
-  id: string;
-  invoiceId: string;
-  chain: string;
-  asset: string;
-  tokenContract: string;
-  fromAddress: string;
-  derivationIndex: number;
-  toAddress: string;
-  baseUnits: string;
-  nonce: number;
-  gasPrice: string;
-  gasLimit: number;
-  unsignedTx: string;
-  now: number;
-}) => {
-  db.prepare(
-    `INSERT INTO payment_sweeps (
-      id, invoice_id, chain, asset, token_contract, from_address, derivation_index, to_address, base_units,
-      nonce, gas_price, gas_limit, unsigned_tx, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    input.id,
-    input.invoiceId,
-    input.chain,
-    input.asset,
-    input.tokenContract,
-    input.fromAddress,
-    input.derivationIndex,
-    input.toAddress,
-    input.baseUnits,
-    input.nonce,
-    input.gasPrice,
-    input.gasLimit,
-    input.unsignedTx,
-    input.now,
-  );
-};
-
 export const addressPoolRows = (now = Date.now()) => db.prepare(`SELECT a.*, l.chain AS lease_chain, l.invoice_id AS lease_invoice_id, l.state AS lease_state, l.expires_at AS lease_expires_at, l.quarantine_until FROM payment_addresses a LEFT JOIN payment_address_leases l ON l.address = a.address ORDER BY a.family, a.derivation_index, l.chain`).all(now);
-
-export const markSwept = (invoiceId: string, txHash: string, now: number) => {
-  const changed = db
-    .prepare("UPDATE payment_invoices SET swept_at = ?, sweep_tx = ?, updated_at = ? WHERE id = ? AND swept_at IS NULL")
-    .run(now, txHash, now, invoiceId);
-  if (changed.changes !== 1) return false;
-  db.prepare("UPDATE payment_sweeps SET broadcast_tx = ?, broadcast_at = ? WHERE invoice_id = ? AND broadcast_tx IS NULL").run(txHash, now, invoiceId);
-  db.prepare("UPDATE payment_addresses SET state = 'swept', reusable_at = NULL WHERE address = (SELECT address FROM payment_invoices WHERE id = ?)").run(invoiceId);
-  db.prepare("UPDATE payment_address_leases SET state = 'swept' WHERE invoice_id = ?").run(invoiceId);
-  return true;
-};

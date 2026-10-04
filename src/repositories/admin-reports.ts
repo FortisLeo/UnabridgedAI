@@ -1,4 +1,5 @@
 import { db } from "../db/client.ts";
+import { ensureAddressSweepTable } from "../payments/address-sweeps.ts";
 
 export const count = (sql: string) => (db.prepare(sql).get() as { count: number }).count;
 
@@ -17,12 +18,7 @@ export const balancesSummary = () => ({
 });
 
 export const sweepRows = () => {
-  db.exec(`CREATE TABLE IF NOT EXISTS payment_address_sweeps (
-    id TEXT PRIMARY KEY, chain TEXT NOT NULL, asset TEXT NOT NULL, token_contract TEXT NOT NULL,
-    from_address TEXT NOT NULL, derivation_index INTEGER NOT NULL, to_address TEXT NOT NULL,
-    base_units TEXT NOT NULL, nonce INTEGER NOT NULL, gas_price TEXT NOT NULL, gas_limit INTEGER NOT NULL,
-    unsigned_tx TEXT NOT NULL, created_at INTEGER NOT NULL, broadcast_tx TEXT, broadcast_at INTEGER, confirmed_at INTEGER
-  )`);
+  ensureAddressSweepTable();
   return db.prepare("SELECT id, chain, asset, base_units, from_address, to_address, broadcast_tx, broadcast_at, created_at, confirmed_at FROM payment_address_sweeps ORDER BY created_at DESC LIMIT 200").all();
 };
 export const revenueRows = () => ({
