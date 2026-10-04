@@ -11,6 +11,7 @@ export type Quota = {
   requestsUsed: number;
   requestsLimit: number | null;
   remaining: number | null;
+  proExpiresAt?: number | null;
 };
 
 export type ChatSummary = {

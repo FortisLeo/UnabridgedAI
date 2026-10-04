@@ -19,8 +19,8 @@ export const findUserByUsername = (username: string) =>
     | undefined;
 
 export const findUserById = (id: string) =>
-  db.prepare("SELECT id, username, plan, requests_used, created_at FROM users WHERE id = ?").get(id) as
-    | { id: string; username: string; plan: string; requests_used: number; created_at: number }
+  db.prepare("SELECT id, username, plan, pro_expires_at, requests_used, created_at FROM users WHERE id = ?").get(id) as
+    | { id: string; username: string; plan: string; pro_expires_at: number | null; requests_used: number; created_at: number }
     | undefined;
 
 export const countSignupsFromIp = (ip: string, since: number) =>

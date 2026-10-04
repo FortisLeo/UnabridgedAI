@@ -3,6 +3,7 @@ import { z } from "zod";
 import { randomUUID } from "../lib/crypto.ts";
 import { publicError } from "../lib/errors.ts";
 import { inputTokenCount } from "../lib/token-count.ts";
+import { proActive } from "../lib/subscription.ts";
 import { titleFrom } from "../lib/http.ts";
 import { chatGuard } from "../middleware/security.ts";
 import { listHistory, ownedChat, persistTurn } from "../repositories/chats.ts";
@@ -36,7 +37,7 @@ chatRouter.post("/", chatGuard, async (req, res) => {
   if (!user) return res.status(401).json({ error: "Sign in required" });
 
   const tokenCount = inputTokenCount(parsed.data.content);
-  const freeRequestsActive = user.plan === "free" && user.requests_used < 3;
+  const freeRequestsActive = !proActive(user.plan, user.pro_expires_at) && user.requests_used < 3;
   if (freeRequestsActive && tokenCount > 500) {
     return res.status(400).json({
       error: `Your first 3 messages are limited to 500 input tokens. This message is ${tokenCount} tokens.`,

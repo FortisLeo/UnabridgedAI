@@ -33,7 +33,7 @@ export const signIn = (res: Response, id: string, username: string, req?: Reques
   res.cookie("unabridged_session", sid, options);
   const usage = getUserUsage(id);
   return res.json({
-    user: { id, username, plan: usage?.plan ?? "free" },
+    user: { id, username, plan: usage?.plan ?? "free", pro_expires_at: usage?.pro_expires_at ?? null },
     quota: usage ? quotaFor(usage) : undefined,
   });
 };
