@@ -52,7 +52,6 @@ export type CreditRow = {
 
 const OPEN_FOR_CREATE = ["open", "underpaid", "exact_pending", "overpaid"];
 export const EVM_POOL_SIZE = 30;
-export const EVM_LEASE_MS = 30 * 60 * 1000;
 export const EVM_QUARANTINE_MS = 20 * 60 * 1000;
 
 export const blockingInvoice = (userId: string) =>
@@ -81,12 +80,21 @@ export const insertSkipped = (family: "evm" | "solana" | "monero", index: number
 };
 
 export const availableEvmIndex = (chain: string, now: number) => {
-  db.prepare("UPDATE payment_address_leases SET state = 'quarantined', quarantine_until = ? WHERE chain = ? AND state = 'leased' AND expires_at <= ?").run(now + EVM_QUARANTINE_MS, chain, now);
+  db.prepare("UPDATE payment_address_leases SET state = 'quarantined', quarantine_until = expires_at + ? WHERE chain = ? AND state = 'leased' AND expires_at <= ?").run(EVM_QUARANTINE_MS, chain, now);
   const row = db.prepare(`SELECT a.derivation_index FROM payment_addresses a
     LEFT JOIN payment_address_leases l ON l.address = a.address AND l.chain = ?
     WHERE a.family = 'evm' AND a.derivation_index < ?
       AND (l.address IS NULL OR l.state = 'swept' OR (l.state = 'quarantined' AND l.quarantine_until <= ?))
-    ORDER BY a.derivation_index ASC LIMIT 1`).get(chain, EVM_POOL_SIZE, now) as { derivation_index: number } | undefined;
+      AND NOT EXISTS (
+        SELECT 1 FROM payment_invoices i
+        WHERE lower(i.address) = lower(a.address) AND i.chain = ?
+          AND (
+            i.status NOT IN ('succeeded', 'expired_unpaid', 'refunded')
+            OR (i.status = 'succeeded' AND i.swept_at IS NULL)
+            OR i.qr_expires_at + ? > ?
+          )
+      )
+    ORDER BY a.derivation_index ASC LIMIT 1`).get(chain, EVM_POOL_SIZE, now, chain, EVM_QUARANTINE_MS, now) as { derivation_index: number } | undefined;
   return row?.derivation_index ?? null;
 };
 
@@ -94,16 +102,19 @@ export const ensureEvmAddress = (address: string, index: number, now: number) =>
   db.prepare("INSERT OR IGNORE INTO payment_addresses (address, family, derivation_index, ata, state, created_at) VALUES (?, 'evm', ?, NULL, 'available', ?)").run(address, index, now);
 };
 
-export const leaseEvmAddress = (address: string, chain: string, invoiceId: string, now: number) => {
+export const leaseEvmAddress = (address: string, chain: string, invoiceId: string, now: number, expiresAt: number) => {
   db.prepare(`INSERT INTO payment_address_leases (address, chain, invoice_id, state, leased_at, expires_at)
     VALUES (?, ?, ?, 'leased', ?, ?)
-    ON CONFLICT(address, chain) DO UPDATE SET invoice_id = excluded.invoice_id, state = 'leased', leased_at = excluded.leased_at, expires_at = excluded.expires_at, quarantine_until = NULL`).run(address, chain, invoiceId, now, now + EVM_LEASE_MS);
-  db.prepare("UPDATE payment_addresses SET state = 'assigned', lease_expires_at = ?, reusable_at = NULL WHERE address = ?").run(now + EVM_LEASE_MS, address);
+    ON CONFLICT(address, chain) DO UPDATE SET invoice_id = excluded.invoice_id, state = 'leased', leased_at = excluded.leased_at, expires_at = excluded.expires_at, quarantine_until = NULL`).run(address, chain, invoiceId, now, expiresAt);
+  db.prepare("UPDATE payment_addresses SET state = 'assigned', lease_expires_at = ?, reusable_at = NULL WHERE address = ?").run(expiresAt, address);
 };
 
-export const releaseEvmLease = (invoiceId: string, paid: boolean, now: number) => {
-  db.prepare("UPDATE payment_address_leases SET state = ?, quarantine_until = ? WHERE invoice_id = ?").run(paid ? "paid_pending_sweep" : "quarantined", paid ? null : now + EVM_QUARANTINE_MS, invoiceId);
-  if (!paid) db.prepare("UPDATE payment_addresses SET state = 'quarantined', reusable_at = ? WHERE address = (SELECT address FROM payment_invoices WHERE id = ?)").run(now + EVM_QUARANTINE_MS, invoiceId);
+export const releaseEvmLease = (invoiceId: string, paid: boolean) => {
+  const invoice = db.prepare("SELECT address, qr_expires_at FROM payment_invoices WHERE id = ?").get(invoiceId) as { address: string; qr_expires_at: number } | undefined;
+  if (!invoice) return;
+  const quarantineUntil = invoice.qr_expires_at + EVM_QUARANTINE_MS;
+  db.prepare("UPDATE payment_address_leases SET state = ?, quarantine_until = ? WHERE invoice_id = ?").run(paid ? "paid_pending_sweep" : "quarantined", paid ? null : quarantineUntil, invoiceId);
+  if (!paid) db.prepare("UPDATE payment_addresses SET state = 'quarantined', reusable_at = ? WHERE lower(address) = lower(?)").run(quarantineUntil, invoice.address);
 };
 
 export const insertAddress = (address: string, family: "evm" | "solana" | "monero", index: number, ata: string | null, now: number) => {

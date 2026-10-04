@@ -32,8 +32,9 @@ export const signIn = (res: Response, id: string, username: string, req?: Reques
   res.clearCookie("n4n1_session", { ...options, maxAge: 0 });
   res.cookie("unabridged_session", sid, options);
   const usage = getUserUsage(id);
+  const quota = usage ? quotaFor(usage) : undefined;
   return res.json({
-    user: { id, username, plan: usage?.plan ?? "free", pro_expires_at: usage?.pro_expires_at ?? null },
-    quota: usage ? quotaFor(usage) : undefined,
+    user: { id, username, plan: quota?.plan ?? "free", pro_expires_at: usage?.pro_expires_at ?? null },
+    quota,
   });
 };

@@ -44,6 +44,7 @@ export const blockBlacklistedIp = (req: Request, res: Response, next: NextFuncti
 
 export const signupGuard = limit("signup", SIGNUP_RATE.windowMs, SIGNUP_RATE.max, "Too many accounts from this network. Try later.", true);
 export const signinGuard = limit("signin", SIGNIN_RATE.windowMs, SIGNIN_RATE.max, "Too many sign-in attempts. Try later.", false);
+export const adminSigninGuard = limit("admin_signin", SIGNIN_RATE.windowMs, SIGNIN_RATE.max, "Too many admin sign-in attempts. Try later.", false);
 export const chatGuard = limit("chat", CHAT_RATE.windowMs, CHAT_RATE.max, "Slow down. Too many messages from this network.", true);
 export const invoiceCreateGuard = limit(
   "invoice_create",
@@ -57,4 +58,10 @@ export const recordFailedSignin = (req: Request) => {
   const ip = clientIp(req);
   if (isPrivateIp(ip)) return;
   recordIpEvent(ip, "signin");
+};
+
+export const recordFailedAdminSignin = (req: Request) => {
+  const ip = clientIp(req);
+  if (isPrivateIp(ip)) return;
+  recordIpEvent(ip, "admin_signin");
 };

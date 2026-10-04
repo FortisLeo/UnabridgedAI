@@ -143,6 +143,58 @@ assert.equal(applySettlement(storedInvoice(), storedCredits(), 3_000, true).gran
 assert.equal((db.prepare("SELECT grant_applied_at FROM payment_invoices WHERE id = '0211316c-6b7f-4231-b3a0-2cd348e0467d'").get() as { grant_applied_at: number }).grant_applied_at, grantAt);
 assert.equal(takeIndex("monero"), 1);
 assert.equal((db.prepare("SELECT next_index FROM address_counters WHERE family = 'monero'").get() as { next_index: number }).next_index, 2);
+
+const { availableEvmIndex, ensureEvmAddress, leaseEvmAddress } = await import("./store.ts");
+const poolUser = "pool-user";
+db.prepare("INSERT INTO users (id, username, password_hash, plan, created_at) VALUES (?, 'pool', 'x', 'free', 1)").run(poolUser);
+const poolAddress = (index: number) => `0x${(index + 100).toString(16).padStart(40, "0")}`;
+const poolInvoice = (index: number, status: string, qrExpiresAt: number, sweptAt: number | null = null) => {
+  const address = poolAddress(index);
+  ensureEvmAddress(address, index, 1);
+  db.prepare(
+    `INSERT INTO payment_invoices (id, user_id, chain, asset, token_contract, expected_base_units, address, derivation_index, status, qr_expires_at, created_at, updated_at, swept_at)
+     VALUES (?, ?, 'ethereum', 'usdc', '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', '15000000', ?, ?, ?, ?, 1, 1, ?)`,
+  ).run(`pool-${index}`, poolUser, address, index, status, qrExpiresAt, sweptAt);
+  return address;
+};
+const clearPool = (...indices: number[]) => {
+  for (const index of indices) {
+    db.prepare("DELETE FROM payment_invoices WHERE id = ?").run(`pool-${index}`);
+    db.prepare("DELETE FROM payment_address_leases WHERE address = ?").run(poolAddress(index));
+    db.prepare("DELETE FROM payment_addresses WHERE address = ?").run(poolAddress(index));
+  }
+};
+
+// An address whose lease lapsed while its invoice is still payable must not be handed to a new invoice.
+const openAddress = poolInvoice(0, "open", 60_000);
+leaseEvmAddress(openAddress, "ethereum", "pool-0", 0, 60_000);
+assert.notEqual(availableEvmIndex("ethereum", 61_000), 0);
+assert.notEqual(availableEvmIndex("ethereum", 60_000 + 15 * 60 * 1000), 0);
+clearPool(0);
+
+// A legacy address with no lease row but still backing an open invoice must not be reused.
+poolInvoice(1, "open", 60_000);
+assert.notEqual(availableEvmIndex("ethereum", 1_000), 1);
+assert.notEqual(availableEvmIndex("ethereum", 10_000_000), 1);
+clearPool(1);
+
+// Quarantine runs from the invoice's actual payment expiry, not the lease timestamp.
+const expiredAddress = poolInvoice(2, "expired_unpaid", 60_000);
+leaseEvmAddress(expiredAddress, "ethereum", "pool-2", 0, 60_000);
+assert.notEqual(availableEvmIndex("ethereum", 60_000 + 19 * 60 * 1000), 2);
+assert.equal(availableEvmIndex("ethereum", 60_000 + 21 * 60 * 1000), 2);
+clearPool(2);
+
+// A paid invoice keeps its address until the funds are swept, then waits out the quarantine.
+const paidAddress = poolInvoice(3, "succeeded", 60_000);
+leaseEvmAddress(paidAddress, "ethereum", "pool-3", 0, 60_000);
+db.prepare("UPDATE payment_address_leases SET state = 'paid_pending_sweep', quarantine_until = NULL WHERE address = ?").run(paidAddress);
+assert.notEqual(availableEvmIndex("ethereum", 60_000 + 60 * 60 * 1000), 3);
+db.prepare("UPDATE payment_invoices SET swept_at = ? WHERE id = 'pool-3'").run(61_000);
+db.prepare("UPDATE payment_address_leases SET state = 'swept' WHERE address = ?").run(paidAddress);
+assert.equal(availableEvmIndex("ethereum", 60_000 + 21 * 60 * 1000), 3);
+clearPool(3);
+
 const { sweepCandidates, markSwept, recordSweep } = await import("./store.ts");
 const sweptUser = "sweep-user";
 db.prepare("INSERT INTO users (id, username, password_hash, plan, created_at) VALUES (?, 'sweep', 'x', 'pro', 1)").run(sweptUser);
