@@ -16,7 +16,15 @@ export const balancesSummary = () => ({
   health: db.prepare("SELECT * FROM chain_health ORDER BY chain").all(),
 });
 
-export const sweepRows = () => db.prepare("SELECT id, invoice_id, chain, asset, base_units, from_address, to_address, broadcast_tx, broadcast_at, created_at FROM payment_sweeps ORDER BY created_at DESC LIMIT 200").all();
+export const sweepRows = () => {
+  db.exec(`CREATE TABLE IF NOT EXISTS payment_address_sweeps (
+    id TEXT PRIMARY KEY, chain TEXT NOT NULL, asset TEXT NOT NULL, token_contract TEXT NOT NULL,
+    from_address TEXT NOT NULL, derivation_index INTEGER NOT NULL, to_address TEXT NOT NULL,
+    base_units TEXT NOT NULL, nonce INTEGER NOT NULL, gas_price TEXT NOT NULL, gas_limit INTEGER NOT NULL,
+    unsigned_tx TEXT NOT NULL, created_at INTEGER NOT NULL, broadcast_tx TEXT, broadcast_at INTEGER, confirmed_at INTEGER
+  )`);
+  return db.prepare("SELECT id, chain, asset, base_units, from_address, to_address, broadcast_tx, broadcast_at, created_at, confirmed_at FROM payment_address_sweeps ORDER BY created_at DESC LIMIT 200").all();
+};
 export const revenueRows = () => ({
   byChain: db.prepare("SELECT chain, COUNT(*) AS invoices, SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS paid FROM payment_invoices GROUP BY chain").all(),
   byAsset: db.prepare("SELECT asset, COUNT(*) AS invoices, SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS paid FROM payment_invoices GROUP BY asset").all(),

@@ -1,9 +1,11 @@
 import { keccak_256 } from "@noble/hashes/sha3";
 import { env } from "../lib/env.ts";
+import { db } from "../db/client.ts";
 import { randomUUID } from "../lib/crypto.ts";
 import { chainIdOf } from "./allowlist.ts";
 import { balanceOf, createJsonRpc, evmChainId, type JsonRpc } from "./chain.ts";
-import { sweepCandidates, markSwept, recordSweep } from "./store.ts";
+import { addressPoolRows } from "./store.ts";
+import { broadcastAddressSweep, ensureAddressSweepTable, newSweepId, pendingAddressSweep, recordAddressSweep } from "./address-sweeps.ts";
 
 const TRANSFER_SELECTOR = "a9059cbb";
 const GAS_LIMIT = 80_000;
@@ -93,6 +95,7 @@ const transferData = (to: string, amount: bigint) => hexToBytes(`${TRANSFER_SELE
 export type SweepPlan = {
   id: string;
   invoiceId: string;
+  sweepId: string;
   chain: "polygon" | "ethereum";
   chainId: number;
   asset: string;
@@ -117,61 +120,29 @@ const rpcFor = (chain: "polygon" | "ethereum") => {
 };
 
 export const planSweeps = async (chain: "polygon" | "ethereum", now = Date.now()): Promise<SweepPlan[]> => {
+  ensureAddressSweepTable();
   const cold = coldAddressFor(chain);
   if (!isAddress(cold)) throw new SweepError(`Configure one ${chain} cold address before sweeping`);
   const rpc = rpcFor(chain);
   if ((await evmChainId(rpc)) !== chainIdOf(chain)) throw new SweepError(`Refusing to sweep: ${chain} RPC returned the wrong chain id`);
   const plans: SweepPlan[] = [];
-  for (const invoice of sweepCandidates(chain)) {
-    const balance = await balanceOf(rpc, invoice.token_contract, invoice.address);
-    const gas = await nativeBalance(rpc, invoice.address);
-    if (balance <= 0n || gas <= 0n) continue;
-    const nonce = hexToBigInt(await rpc("eth_getTransactionCount", [invoice.address, "pending"]));
-    const gasPrice = hexToBigInt(await rpc("eth_gasPrice", []));
-    if (nonce > BigInt(Number.MAX_SAFE_INTEGER)) throw new SweepError("Nonce is too large");
-    const unsignedTx = unsignedTokenTransfer({
-      nonce,
-      gasPrice,
-      gasLimit: BigInt(GAS_LIMIT),
-      token: invoice.token_contract,
-      to: cold,
-      amount: balance,
-      chainId: BigInt(chainIdOf(chain)),
-    });
-    const plan: SweepPlan = {
-      id: randomUUID(),
-      invoiceId: invoice.id,
-      chain,
-      chainId: chainIdOf(chain),
-      asset: invoice.asset,
-      tokenContract: invoice.token_contract,
-      fromAddress: invoice.address,
-      derivationIndex: invoice.derivation_index,
-      toAddress: cold,
-      baseUnits: balance.toString(),
-      nonce: Number(nonce),
-      gasPrice: gasPrice.toString(),
-      gasLimit: GAS_LIMIT,
-      unsignedTx,
-      signingHash: bytesToHex(keccak_256(hexToBytes(unsignedTx))),
-    };
-    recordSweep({
-      id: plan.id,
-      invoiceId: plan.invoiceId,
-      chain,
-      asset: plan.asset,
-      tokenContract: plan.tokenContract,
-      fromAddress: plan.fromAddress,
-      derivationIndex: plan.derivationIndex,
-      toAddress: plan.toAddress,
-      baseUnits: plan.baseUnits,
-      nonce: plan.nonce,
-      gasPrice: plan.gasPrice,
-      gasLimit: plan.gasLimit,
-      unsignedTx: plan.unsignedTx,
-      now,
-    });
-    plans.push(plan);
+  const addresses = addressPoolRows().filter((row: any) => row.family === "evm" && row.lease_chain === chain);
+  for (const address of addresses as any[]) {
+    const candidates = db.prepare("SELECT token_contract, asset, derivation_index, id FROM payment_invoices WHERE chain = ? AND lower(address) = lower(?) AND token_contract IS NOT NULL GROUP BY token_contract, asset, derivation_index ORDER BY created_at DESC").all(chain, address.address) as Array<{ token_contract: string; asset: string; derivation_index: number; id: string }>;
+    for (const candidate of candidates) {
+      if (pendingAddressSweep(chain, address.address, candidate.token_contract)) continue;
+      const balance = await balanceOf(rpc, candidate.token_contract, address.address);
+      const gas = await nativeBalance(rpc, address.address);
+      if (balance <= 0n || gas <= 0n) continue;
+      const nonce = hexToBigInt(await rpc("eth_getTransactionCount", [address.address, "pending"]));
+      const gasPrice = hexToBigInt(await rpc("eth_gasPrice", []));
+      if (nonce > BigInt(Number.MAX_SAFE_INTEGER)) throw new SweepError("Nonce is too large");
+      const unsignedTx = unsignedTokenTransfer({ nonce, gasPrice, gasLimit: BigInt(GAS_LIMIT), token: candidate.token_contract, to: cold, amount: balance, chainId: BigInt(chainIdOf(chain)) });
+      const sweepId = newSweepId();
+      const plan: SweepPlan = { id: sweepId, sweepId, invoiceId: candidate.id, chain, chainId: chainIdOf(chain), asset: candidate.asset, tokenContract: candidate.token_contract, fromAddress: address.address, derivationIndex: candidate.derivation_index, toAddress: cold, baseUnits: balance.toString(), nonce: Number(nonce), gasPrice: gasPrice.toString(), gasLimit: GAS_LIMIT, unsignedTx, signingHash: bytesToHex(keccak_256(hexToBytes(unsignedTx))) };
+      recordAddressSweep({ id: sweepId, chain, asset: plan.asset, token_contract: plan.tokenContract, from_address: plan.fromAddress, derivation_index: plan.derivationIndex, to_address: plan.toAddress, base_units: plan.baseUnits, nonce: plan.nonce, gas_price: plan.gasPrice, gas_limit: plan.gasLimit, unsigned_tx: plan.unsignedTx, created_at: now });
+      plans.push(plan);
+    }
   }
   return plans;
 };
@@ -203,13 +174,13 @@ export const broadcastSweep = async (plan: SweepPlan, now = Date.now()) => {
   const rpc = rpcFor(plan.chain);
   const txHash = await rpc("eth_sendRawTransaction", [signed.signedTx]);
   if (typeof txHash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(txHash)) throw new SweepError("RPC did not return a transaction hash");
-  if (!markSwept(plan.invoiceId, txHash, now)) throw new SweepError("Invoice was already swept");
+  if (!broadcastAddressSweep(plan.sweepId, txHash, now)) throw new SweepError("Address sweep was already broadcast");
   return txHash;
 };
 
 export const runSweep = async (chain: "polygon" | "ethereum", now = Date.now()) => {
   const plans = await planSweeps(chain, now);
-  const sent: Array<{ invoiceId: string; txHash: string }> = [];
-  for (const plan of plans) sent.push({ invoiceId: plan.invoiceId, txHash: await broadcastSweep(plan, now) });
+  const sent: Array<{ sweepId: string; txHash: string }> = [];
+  for (const plan of plans) sent.push({ sweepId: plan.sweepId, txHash: await broadcastSweep(plan, now) });
   return sent;
 };

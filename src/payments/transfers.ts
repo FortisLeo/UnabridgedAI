@@ -4,6 +4,7 @@ import { randomUUID } from "../lib/crypto.ts";
 import { chainIdOf } from "./allowlist.ts";
 import { createJsonRpc, evmChainId, getReceipt, type JsonRpc } from "./chain.ts";
 import { planSweeps, type SweepPlan } from "./evm-sweep.ts";
+import { confirmAddressSweep, ensureAddressSweepTable } from "./address-sweeps.ts";
 
 export class TransferError extends Error {
   code: string;
@@ -98,6 +99,7 @@ export const broadcastTransfer = async (id: string, now = Date.now()) => {
   };
   const signed = await signerRequest({
     id,
+    sweepId: id,
     invoiceId: row.invoice_id,
     chain,
     chainId: chainIdOf(chain),
@@ -136,7 +138,9 @@ export const confirmTransfer = async (id: string, now = Date.now()) => {
     : 0n;
   if (!receipt?.status || moved < BigInt(row.base_units)) throw new TransferError("confirmation_pending", "The transfer receipt does not show the token arriving at the cold address");
   db.prepare("UPDATE payment_transfers SET status = 'confirmed', updated_at = ? WHERE id = ?").run(now, id);
-  db.prepare("UPDATE payment_invoices SET swept_at = COALESCE(swept_at, ?), sweep_tx = COALESCE(sweep_tx, ?) WHERE id = ?").run(now, row.tx_hash, row.invoice_id);
-  db.prepare("UPDATE payment_addresses SET state = 'swept' WHERE address = ?").run(invoice.address);
+  ensureAddressSweepTable();
+  const sweepId = db.prepare("SELECT id FROM payment_address_sweeps WHERE chain = ? AND lower(from_address) = lower(?) AND broadcast_tx = ?").get(chain, invoice.address, row.tx_hash) as { id: string } | undefined;
+  if (sweepId) confirmAddressSweep(sweepId.id, now);
+  else db.prepare("UPDATE payment_addresses SET state = 'swept' WHERE lower(address) = lower(?)").run(invoice.address);
   return { id, status: "confirmed", receivedBaseUnits: moved.toString() };
 };
