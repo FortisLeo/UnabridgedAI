@@ -185,12 +185,13 @@ assert.notEqual(availableEvmIndex("ethereum", 60_000 + 19 * 60 * 1000), 2);
 assert.equal(availableEvmIndex("ethereum", 60_000 + 21 * 60 * 1000), 2);
 clearPool(2);
 
-// A paid invoice keeps its address until its address sweep confirms, then it is reusable without invoice hacked columns.
+// Settlement releases the address immediately, independently of sweep confirmation.
 const paidAddress = poolInvoice(3, "succeeded", 60_000);
 leaseEvmAddress(paidAddress, "ethereum", "pool-3", 0, 60_000);
-db.prepare("UPDATE payment_address_leases SET state = 'paid_pending_sweep', quarantine_until = NULL WHERE address = ?").run(paidAddress);
-assert.notEqual(availableEvmIndex("ethereum", 60_000 + 60 * 60 * 1000), 3);
-const { ensureAddressSweepTable, recordAddressSweep, broadcastAddressSweep, confirmAddressSweep, pendingAddressSweep, markAddressSwept } = await import("./address-sweeps.ts");
+const { releaseEvmLease, invoiceForTransfer } = await import("./store.ts");
+releaseEvmLease("pool-3", true);
+assert.equal(availableEvmIndex("ethereum", 1_000), 3);
+const { ensureAddressSweepTable, recordAddressSweep, broadcastAddressSweep, confirmAddressSweep, pendingAddressSweep } = await import("./address-sweeps.ts");
 ensureAddressSweepTable();
 const paidSweep = "sweep-pool-3";
 recordAddressSweep({ id: paidSweep, chain: "ethereum", asset: "usdc", token_contract: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48", from_address: paidAddress, derivation_index: 3, to_address: "0x2222222222222222222222222222222222222222", base_units: "15000000", nonce: 0, gas_price: "1", gas_limit: 80000, unsigned_tx: "0xdead", created_at: 61_000 });
@@ -198,18 +199,12 @@ assert.equal(pendingAddressSweep("ethereum", paidAddress, "0xa0b86991c6218b36c1d
 assert.equal(broadcastAddressSweep(paidSweep, "0xfeed", 61_000), true);
 // Dedup keeps covering broadcast-but-unconfirmed sweeps so a second sweep is never planned for the same balance.
 assert.equal(pendingAddressSweep("ethereum", paidAddress, "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48")?.id, paidSweep);
+leaseEvmAddress(paidAddress, "ethereum", "new-customer", 61_000, 120_000);
 assert.equal(confirmAddressSweep(paidSweep, 62_000), true);
+assert.equal((db.prepare("SELECT invoice_id FROM payment_address_leases WHERE address = ?").get(paidAddress) as { invoice_id: string }).invoice_id, "new-customer");
 assert.equal(pendingAddressSweep("ethereum", paidAddress, "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48"), undefined);
-assert.equal(availableEvmIndex("ethereum", 60_000 + 21 * 60 * 1000), 3);
+assert.notEqual(availableEvmIndex("ethereum", 62_000), 3);
 clearPool(3);
-
-// markAddressSwept is the shared confirmation boundary and also advances a legacy lease-less lease row.
-const legacyAddress = poolInvoice(4, "succeeded", 60_000);
-markAddressSwept("ethereum", legacyAddress);
-assert.equal((db.prepare("SELECT state FROM payment_addresses WHERE address = ?").get(legacyAddress) as { state: string }).state, "swept");
-const nextIndex = takeIndex("evm");
-assert.notEqual(nextIndex, 4);
-clearPool(4);
 
 // A legacy funded address with no lease row is quarantined into the lease table so it cannot be reused unswept.
 const { backfillLegacyLeases } = await import("../db/client.ts");
@@ -221,9 +216,21 @@ db.prepare(
 ).run(poolUser, legacyFunded);
 backfillLegacyLeases();
 const backfilled = db.prepare("SELECT state FROM payment_address_leases WHERE address = ? AND chain = 'ethereum'").get(legacyFunded) as { state: string } | undefined;
-assert.equal(backfilled?.state, "paid_pending_sweep");
-assert.notEqual(availableEvmIndex("ethereum", 60_000 + 60 * 60 * 1000), 20);
+assert.equal(backfilled?.state, "available");
+assert.notEqual(availableEvmIndex("ethereum", 60_000 + 60 * 60 * 1000), null);
 clearPool(20);
+
+// Existing wallet balances are irrelevant: block-time windows and log identities own credits.
+const historyAddress = poolInvoice(21, "succeeded", 60_000);
+db.prepare("UPDATE payment_invoices SET settled_at = 30_000 WHERE id = 'pool-21'").run();
+db.prepare(`INSERT INTO payment_invoices (id, user_id, chain, asset, token_contract, expected_base_units, address, derivation_index, status, qr_expires_at, created_at, updated_at)
+  VALUES ('history-next', ?, 'ethereum', 'usdc', '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48', '15000000', ?, 21, 'open', 90_000, 31_000, 31_000)`).run(poolUser, historyAddress);
+assert.equal(invoiceForTransfer(historyAddress, 'ethereum', '0xold', 0, 20_000)?.id, 'pool-21');
+assert.equal(invoiceForTransfer(historyAddress, 'ethereum', '0xnew', 0, 40_000)?.id, 'history-next');
+assert.equal(invoiceForTransfer(historyAddress, 'ethereum', '0xgap', 0, 30_500), undefined);
+assert.equal(invoiceForTransfer(historyAddress, 'ethereum', '0xunknown', 0, null), undefined);
+db.prepare("DELETE FROM payment_invoices WHERE id = 'history-next'").run();
+clearPool(21);
 closeDb();
 
 console.log("payment tests passed");

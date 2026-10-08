@@ -90,7 +90,7 @@ db.prepare(
 export const backfillLegacyLeases = () => db.exec(`
   INSERT OR IGNORE INTO payment_address_leases (address, chain, invoice_id, state, leased_at, expires_at, quarantine_until)
   SELECT a.address, i.chain, i.id,
-    CASE WHEN i.status = 'succeeded' THEN 'paid_pending_sweep' ELSE 'quarantined' END,
+    CASE WHEN i.status = 'succeeded' THEN 'available' ELSE 'quarantined' END,
     i.created_at,
     i.qr_expires_at,
     CASE WHEN i.status = 'succeeded' THEN NULL ELSE i.qr_expires_at + 1200000 END
@@ -101,6 +101,8 @@ export const backfillLegacyLeases = () => db.exec(`
     AND i.id = (SELECT i2.id FROM payment_invoices i2 WHERE lower(i2.address) = lower(a.address) AND i2.chain = i.chain ORDER BY i2.created_at DESC LIMIT 1)
 `);
 backfillLegacyLeases();
+db.exec(`UPDATE payment_address_leases SET state = 'available', quarantine_until = NULL
+  WHERE state = 'paid_pending_sweep' AND invoice_id IN (SELECT id FROM payment_invoices WHERE status = 'succeeded');`);
 
 export const closeDb = () => {
   try {

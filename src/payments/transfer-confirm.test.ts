@@ -26,7 +26,7 @@ const rpc = createServer((req, res) => {
     };
     const result = body.method === "eth_getTransactionReceipt"
       ? (includeLog ? { status: "0x1", blockHash: log.blockHash, blockNumber: "0x10", logs: [log] } : null)
-      : "0x89";
+      : body.method === "eth_getBlockByNumber" ? { number: "0x20", hash: "0x" + "ab".repeat(32) } : "0x89";
     res.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
   });
 });
@@ -55,10 +55,10 @@ await assert.rejects(() => confirmTransfer("transfer-1", 2), (error: unknown) =>
 includeLog = true;
 const confirmed = await confirmTransfer("transfer-1", 3);
 assert.equal(confirmed.status, "confirmed");
-assert.equal((db.prepare("SELECT state FROM payment_addresses WHERE derivation_index = 9").get() as { state: string }).state, "swept");
-assert.equal((db.prepare("SELECT state FROM payment_address_leases WHERE invoice_id = 'paid'").get() as { state: string }).state, "swept");
+assert.equal((db.prepare("SELECT state FROM payment_addresses WHERE derivation_index = 9").get() as { state: string }).state, "assigned");
+assert.equal((db.prepare("SELECT state FROM payment_address_leases WHERE invoice_id = 'paid'").get() as { state: string }).state, "paid_pending_sweep");
 const { availableEvmIndex } = await import("./store.ts");
-assert.equal(availableEvmIndex("polygon", 60_000), 9);
+assert.notEqual(availableEvmIndex("polygon", 60_000), 9);
 
 // The batch/CLI path confirms a broadcast sweep only once the receipt shows the funds at cold.
 const cliAddress = "0x4444444444444444444444444444444444444444";
@@ -72,7 +72,7 @@ assert.equal(await confirmBroadcastSweeps("polygon", 6), 0);
 assert.equal((db.prepare("SELECT state FROM payment_address_leases WHERE invoice_id = 'cli-paid'").get() as { state: string }).state, "paid_pending_sweep");
 includeLog = true;
 assert.equal(await confirmBroadcastSweeps("polygon", 7), 1);
-assert.equal((db.prepare("SELECT state FROM payment_address_leases WHERE invoice_id = 'cli-paid'").get() as { state: string }).state, "swept");
+assert.equal((db.prepare("SELECT state FROM payment_address_leases WHERE invoice_id = 'cli-paid'").get() as { state: string }).state, "paid_pending_sweep");
 assert.notEqual((db.prepare("SELECT confirmed_at FROM payment_address_sweeps WHERE id = 'cli-sweep'").get() as { confirmed_at: number | null }).confirmed_at, null);
 await new Promise<void>((resolve) => rpc.close(() => resolve()));
 closeDb();

@@ -84,7 +84,7 @@ export const availableEvmIndex = (chain: string, now: number) => {
   const row = db.prepare(`SELECT a.derivation_index FROM payment_addresses a
     LEFT JOIN payment_address_leases l ON l.address = a.address AND l.chain = ?
     WHERE a.family = 'evm' AND a.derivation_index < ?
-      AND (l.address IS NULL OR l.state = 'swept' OR (l.state = 'quarantined' AND l.quarantine_until <= ?))
+      AND (l.address IS NULL OR l.state IN ('available', 'swept') OR (l.state = 'quarantined' AND l.quarantine_until <= ?))
       AND NOT EXISTS (
         SELECT 1 FROM payment_invoices i
         WHERE lower(i.address) = lower(a.address) AND i.chain = ?
@@ -110,8 +110,8 @@ export const releaseEvmLease = (invoiceId: string, paid: boolean) => {
   const invoice = db.prepare("SELECT address, qr_expires_at FROM payment_invoices WHERE id = ?").get(invoiceId) as { address: string; qr_expires_at: number } | undefined;
   if (!invoice) return;
   const quarantineUntil = invoice.qr_expires_at + EVM_QUARANTINE_MS;
-  db.prepare("UPDATE payment_address_leases SET state = ?, quarantine_until = ? WHERE invoice_id = ?").run(paid ? "paid_pending_sweep" : "quarantined", paid ? null : quarantineUntil, invoiceId);
-  if (!paid) db.prepare("UPDATE payment_addresses SET state = 'quarantined', reusable_at = ? WHERE lower(address) = lower(?)").run(quarantineUntil, invoice.address);
+  db.prepare("UPDATE payment_address_leases SET state = ?, quarantine_until = ? WHERE invoice_id = ?").run(paid ? "available" : "quarantined", paid ? null : quarantineUntil, invoiceId);
+  db.prepare("UPDATE payment_addresses SET state = ?, reusable_at = ? WHERE lower(address) = lower(?)").run(paid ? "available" : "quarantined", paid ? null : quarantineUntil, invoice.address);
 };
 
 export const insertAddress = (address: string, family: "evm" | "solana" | "monero", index: number, ata: string | null, now: number) => {
@@ -249,7 +249,7 @@ export const setRefundAddress = (invoiceId: string, address: string, chain: stri
 };
 
 export const evmAddresses = () =>
-  db.prepare("SELECT address, derivation_index FROM payment_addresses WHERE family = 'evm' AND state = 'assigned'").all() as Array<{
+  db.prepare("SELECT address, derivation_index FROM payment_addresses WHERE family = 'evm' AND address LIKE '0x%'").all() as Array<{
     address: string;
     derivation_index: number;
   }>;
@@ -279,4 +279,16 @@ export const recordChainHealth = (chain: string, status: string, error: string |
 export const ataOf = (address: string) =>
   (db.prepare("SELECT ata FROM payment_addresses WHERE address = ?").get(address) as { ata: string | null } | undefined)?.ata ?? null;
 
-export const addressPoolRows = (now = Date.now()) => db.prepare(`SELECT a.*, l.chain AS lease_chain, l.invoice_id AS lease_invoice_id, l.state AS lease_state, l.expires_at AS lease_expires_at, l.quarantine_until FROM payment_addresses a LEFT JOIN payment_address_leases l ON l.address = a.address ORDER BY a.family, a.derivation_index, l.chain`).all(now);
+export const addressPoolRows = () => db.prepare(`SELECT a.*, l.chain AS lease_chain, l.invoice_id AS lease_invoice_id, l.state AS lease_state, l.expires_at AS lease_expires_at, l.quarantine_until FROM payment_addresses a LEFT JOIN payment_address_leases l ON l.address = a.address ORDER BY a.family, a.derivation_index, l.chain`).all();
+
+export const invoiceForTransfer = (address: string, chain: string, txHash: string, logIndex: number, blockTime: number | null) => {
+  const credited = db.prepare("SELECT i.* FROM payment_credits c JOIN payment_invoices i ON i.id = c.invoice_id WHERE c.chain = ? AND c.tx_hash = ? AND c.output_index = ?").get(chain, txHash, logIndex) as InvoiceRow | undefined;
+  if (credited) return credited;
+  if (blockTime == null) {
+    const invoices = db.prepare("SELECT * FROM payment_invoices WHERE lower(address) = lower(?) AND chain = ?").all(address, chain) as InvoiceRow[];
+    return invoices.length === 1 ? invoices[0] : undefined;
+  }
+  return db.prepare(`SELECT * FROM payment_invoices WHERE lower(address) = lower(?) AND chain = ?
+    AND created_at <= ? AND qr_expires_at >= ? AND (settled_at IS NULL OR settled_at >= ?)
+    ORDER BY created_at DESC LIMIT 1`).get(address, chain, blockTime, blockTime, blockTime) as InvoiceRow | undefined;
+};

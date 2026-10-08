@@ -2,8 +2,8 @@ import { keccak_256 } from "@noble/hashes/sha3";
 import { env } from "../lib/env.ts";
 import { db } from "../db/client.ts";
 import { randomUUID } from "../lib/crypto.ts";
-import { chainIdOf } from "./allowlist.ts";
-import { balanceOf, createJsonRpc, evmChainId, getReceipt, type JsonRpc } from "./chain.ts";
+import { chainIdOf, resolvePair } from "./allowlist.ts";
+import { balanceOf, createJsonRpc, evmChainId, finalizedHead, getReceipt, type JsonRpc } from "./chain.ts";
 import { addressPoolRows } from "./store.ts";
 import { broadcastAddressSweep, confirmAddressSweep, ensureAddressSweepTable, newSweepId, pendingAddressSweep, recordAddressSweep } from "./address-sweeps.ts";
 
@@ -94,7 +94,6 @@ const transferData = (to: string, amount: bigint) => hexToBytes(`${TRANSFER_SELE
 
 export type SweepPlan = {
   id: string;
-  invoiceId: string;
   sweepId: string;
   chain: "polygon" | "ethereum";
   chainId: number;
@@ -128,20 +127,22 @@ export const planSweeps = async (chain: "polygon" | "ethereum", now = Date.now()
   const plans: SweepPlan[] = [];
   const addresses = addressPoolRows().filter((row: any) => row.family === "evm" && row.lease_chain === chain);
   for (const address of addresses as any[]) {
-    const candidates = db.prepare("SELECT token_contract, asset, derivation_index, id FROM payment_invoices WHERE chain = ? AND lower(address) = lower(?) AND token_contract IS NOT NULL GROUP BY token_contract, asset, derivation_index ORDER BY created_at DESC").all(chain, address.address) as Array<{ token_contract: string; asset: string; derivation_index: number; id: string }>;
+    const candidates = [resolvePair(chain, "usdc")!, resolvePair(chain, "usdt")!].map((pair) => ({ token_contract: pair.contract!, asset: pair.asset, derivation_index: address.derivation_index }));
+    let nextNonce = hexToBigInt(await rpc("eth_getTransactionCount", [address.address, "pending"]));
     for (const candidate of candidates) {
       if (pendingAddressSweep(chain, address.address, candidate.token_contract)) continue;
       const balance = await balanceOf(rpc, candidate.token_contract, address.address);
       const gas = await nativeBalance(rpc, address.address);
       if (balance <= 0n || gas <= 0n) continue;
-      const nonce = hexToBigInt(await rpc("eth_getTransactionCount", [address.address, "pending"]));
+      const nonce = nextNonce;
       const gasPrice = hexToBigInt(await rpc("eth_gasPrice", []));
       if (nonce > BigInt(Number.MAX_SAFE_INTEGER)) throw new SweepError("Nonce is too large");
       const unsignedTx = unsignedTokenTransfer({ nonce, gasPrice, gasLimit: BigInt(GAS_LIMIT), token: candidate.token_contract, to: cold, amount: balance, chainId: BigInt(chainIdOf(chain)) });
       const sweepId = newSweepId();
-      const plan: SweepPlan = { id: sweepId, sweepId, invoiceId: candidate.id, chain, chainId: chainIdOf(chain), asset: candidate.asset, tokenContract: candidate.token_contract, fromAddress: address.address, derivationIndex: candidate.derivation_index, toAddress: cold, baseUnits: balance.toString(), nonce: Number(nonce), gasPrice: gasPrice.toString(), gasLimit: GAS_LIMIT, unsignedTx, signingHash: bytesToHex(keccak_256(hexToBytes(unsignedTx))) };
+      const plan: SweepPlan = { id: sweepId, sweepId, chain, chainId: chainIdOf(chain), asset: candidate.asset, tokenContract: candidate.token_contract, fromAddress: address.address, derivationIndex: candidate.derivation_index, toAddress: cold, baseUnits: balance.toString(), nonce: Number(nonce), gasPrice: gasPrice.toString(), gasLimit: GAS_LIMIT, unsignedTx, signingHash: bytesToHex(keccak_256(hexToBytes(unsignedTx))) };
       recordAddressSweep({ id: sweepId, chain, asset: plan.asset, token_contract: plan.tokenContract, from_address: plan.fromAddress, derivation_index: plan.derivationIndex, to_address: plan.toAddress, base_units: plan.baseUnits, nonce: plan.nonce, gas_price: plan.gasPrice, gas_limit: plan.gasLimit, unsigned_tx: plan.unsignedTx, created_at: now });
       plans.push(plan);
+      nextNonce += 1n;
     }
   }
   return plans;
@@ -189,6 +190,8 @@ export const confirmBroadcastSweeps = async (chain: "polygon" | "ethereum", now 
   }>;
   if (pending.length === 0) return 0;
   const rpc = rpcFor(chain);
+  if (await evmChainId(rpc) !== chainIdOf(chain)) throw new SweepError("Wrong sweep confirmation chain");
+  const head = await finalizedHead(rpc);
   let confirmed = 0;
   for (const sweep of pending) {
     const receipt = await getReceipt(rpc, sweep.broadcast_tx);
@@ -197,7 +200,7 @@ export const confirmBroadcastSweeps = async (chain: "polygon" | "ethereum", now 
           .filter((log) => log.contract === sweep.token_contract.toLowerCase() && log.to === sweep.to_address.toLowerCase())
           .reduce((sum, log) => sum + log.value, 0n)
       : 0n;
-    if (!receipt?.status || moved < BigInt(sweep.base_units)) continue;
+    if (!receipt?.status || receipt.blockNumber > head.height || moved < BigInt(sweep.base_units)) continue;
     if (confirmAddressSweep(sweep.id, now)) confirmed += 1;
   }
   return confirmed;
