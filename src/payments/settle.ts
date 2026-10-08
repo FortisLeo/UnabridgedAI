@@ -1,7 +1,8 @@
 import { db } from "../db/client.ts";
 import { compareBaseUnits, parseBaseUnits } from "./amounts.ts";
-import type { InvoiceRow, CreditRow } from "./store.ts";
+import { releaseEvmLease, type InvoiceRow, type CreditRow } from "./store.ts";
 import { enqueuePaymentWebhook } from "./webhooks.ts";
+import { nextProExpiry } from "../lib/subscription.ts";
 
 export type InvoiceStatus =
   | "open"
@@ -50,13 +51,14 @@ export const applySettlement = (invoice: InvoiceRow, credits: CreditRow[], now: 
   const status = classify(invoice, credits, now, secondReadAgrees);
   const reason = status === "underpaid" ? shortPaymentReason(invoice, credits, fee) : null;
   const grant = db.transaction(() => {
-    const current = db.prepare("SELECT plan FROM users WHERE id = ?").get(invoice.user_id) as { plan: string } | undefined;
+    const current = db.prepare("SELECT plan, pro_expires_at FROM users WHERE id = ?").get(invoice.user_id) as { plan: string; pro_expires_at: number | null } | undefined;
     let alreadyPro = invoice.already_pro;
     let grantAppliedAt = invoice.grant_applied_at;
     let settledAt = invoice.settled_at;
     if (status === "succeeded" && grantAppliedAt == null) {
-      if (current?.plan !== "pro") db.prepare("UPDATE users SET plan = 'pro' WHERE id = ?").run(invoice.user_id);
-      else alreadyPro = 1;
+      const expiresAt = nextProExpiry(current?.plan === "pro" ? current.pro_expires_at : null, now);
+      db.prepare("UPDATE users SET plan = 'pro', pro_expires_at = ? WHERE id = ?").run(expiresAt, invoice.user_id);
+      if (current?.plan === "pro" && current.pro_expires_at != null && current.pro_expires_at > now) alreadyPro = 1;
       grantAppliedAt = now;
       settledAt = now;
     }
@@ -72,6 +74,9 @@ export const applySettlement = (invoice: InvoiceRow, credits: CreditRow[], now: 
       now,
       JSON.stringify({ status, reason }),
     );
+    if (invoice.chain === "ethereum" || invoice.chain === "polygon") {
+      if (status === "succeeded" || status === "expired_unpaid") releaseEvmLease(invoice.id, status === "succeeded");
+    }
     if (status !== invoice.status) enqueuePaymentWebhook(invoice.id, "payment.status", now);
     return { status, alreadyPro, grantAppliedAt };
   })();

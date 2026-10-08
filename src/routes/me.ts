@@ -11,9 +11,10 @@ meRouter.get("/", (req, res) => {
   const userId = userIdOf(req);
   const user = findUserById(userId);
   if (!user) return res.status(401).json({ error: "Sign in required" });
+  const quota = quotaFor(user);
   res.json({
-    user: { id: user.id, username: user.username, plan: user.plan, created_at: user.created_at },
-    quota: quotaFor(user),
+    user: { id: user.id, username: user.username, plan: quota.plan, pro_expires_at: user.pro_expires_at, created_at: user.created_at },
+    quota,
     keys: listApiKeys(userId).map(({ prefix, created_at, revoked_at }) => ({ prefix, created_at, revoked_at })),
     settings: publicSettings(getSettings(userId)),
   });

@@ -1,11 +1,11 @@
 import { env } from "../lib/env.ts";
 import { scrub } from "../lib/errors.ts";
-import { chainIdOf, entryByContract, EVM_REORG_WINDOW, MONERO_CONFIRMATIONS, MONERO_HEIGHT_LAG_BLOCKS, SOLANA_REORG_SLOTS, TRANSFER_TOPIC } from "./allowlist.ts";
+import { resolvePair, chainIdOf, entryByContract, EVM_REORG_WINDOW, MONERO_CONFIRMATIONS, MONERO_HEIGHT_LAG_BLOCKS, SOLANA_REORG_SLOTS, TRANSFER_TOPIC } from "./allowlist.ts";
 import { formatBaseUnits } from "./amounts.ts";
 import { balanceOf, blockHeader, createJsonRpc, evmChainId, finalizedHead, getReceipt, getTransferLogs, isRangeError, solanaSignatures, solanaSlot, solanaTokenDeltas, usdtFee, type JsonRpc, type TransferLog } from "./chain.ts";
 import { padTopicAddress } from "./evm-address.ts";
 import { applySettlement } from "./settle.ts";
-import { ataOf, creditsFor, creditsForChain, cursorOf, evmAddresses, invoiceByAddress, markMissing, saveCursor, upsertCredit, watchedInvoices, type InvoiceRow } from "./store.ts";
+import { ataOf, creditsFor, creditsForChain, cursorOf, evmAddresses, invoiceForTransfer, markMissing, paymentAddressExists, recordChainHealth, recordUnmatchedTransfer, saveCursor, upsertCredit, watchedInvoices, type InvoiceRow } from "./store.ts";
 import { incomingTransfers, refreshWallet, unlockTimeOf, walletHeight, walletRpc } from "./wallet-rpc.ts";
 import { deliverDueWebhooks } from "./webhooks.ts";
 
@@ -21,14 +21,19 @@ const watcherCause = (error: unknown) => {
 };
 
 const noteFailure = (chain: string, error: unknown) => {
+  const cause = watcherCause(error);
+  recordChainHealth(chain, "error", cause, null);
   const current = backoff.get(chain) ?? { delay: 15_000, nextAt: 0 };
   const delay = Math.min(current.delay * 2, 30_000);
   backoff.set(chain, { delay, nextAt: Date.now() + delay });
-  console.error(scrub(`payment watcher ${chain} failed: ${watcherCause(error)}`));
+  console.error(scrub(`payment watcher ${chain} failed: ${cause}`));
 };
 
 const ready = (chain: string) => (backoff.get(chain)?.nextAt ?? 0) <= Date.now();
-const noteSuccess = (chain: string) => backoff.set(chain, { delay: 15_000, nextAt: 0 });
+const noteSuccess = (chain: string) => {
+  recordChainHealth(chain, "ok", null, null);
+  backoff.set(chain, { delay: 15_000, nextAt: 0 });
+};
 
 export const startPaymentWatchers = () => {
   if (timer || env.paymentWatchMs <= 0) return;
@@ -140,9 +145,9 @@ const watchEvm = async (chain: "ethereum" | "polygon") => {
   const cursor = Math.min(storedCursor, oldestUnsettled);
   const from = Math.max(0, Math.min(cursor, head.height) - EVM_REORG_WINDOW[chain]);
   const invoices = watchedInvoices().filter((invoice) => invoice.chain === "ethereum" || invoice.chain === "polygon");
-  const topics = invoices.map((invoice) => padTopicAddress(invoice.address));
+  const topics = evmAddresses().map((address) => padTopicAddress(address.address));
   if (topics.length === 0) return;
-  const contracts = [...new Set(invoices.filter((invoice) => invoice.chain === chain).map((invoice) => invoice.token_contract).filter((item): item is string => Boolean(item)))];
+  const contracts = [resolvePair(chain, "usdc")!.contract!, resolvePair(chain, "usdt")!.contract!];
   let to = Math.min(head.height, Math.max(cursor, from) + EVM_LOG_BATCH[chain]);
   if (to < from) return;
   for (const contract of contracts) {
@@ -153,9 +158,14 @@ const watchEvm = async (chain: "ethereum" | "polygon") => {
       const logs = await logsWithFallback(rpcs, from, to, contract, [TRANSFER_TOPIC, ...chunk]);
       for (const log of logs) {
         if (log.removed || log.value <= 0n) continue;
-        const invoice = invoiceByAddress(log.to);
-        if (!invoice) continue;
+        const block = await firstRpc(rpcs, (rpc) => rpc("eth_getBlockByNumber", [`0x${log.blockNumber.toString(16)}`, false])) as { timestamp?: string } | null;
+        const blockTime = block?.timestamp ? Number(BigInt(block.timestamp)) * 1000 : null;
+        const invoice = invoiceForTransfer(log.to, chain, log.txHash, log.logIndex, blockTime);
         const asset = entryByContract(chain, log.contract);
+        if (!invoice) {
+          if (paymentAddressExists(log.to) && asset) recordUnmatchedTransfer({ chain, asset: asset.asset, tokenContract: log.contract, txHash: log.txHash, outputIndex: log.logIndex, toAddress: log.to, fromAddress: null, baseUnits: formatBaseUnits(log.value), now: Date.now() });
+          continue;
+        }
         const wrong = !asset || asset.asset !== invoice.asset || invoice.chain !== chain;
         const receipt = await firstRpc(rpcs, (rpc) => getReceipt(rpc, log.txHash));
         if (!receipt?.status) continue;
@@ -195,24 +205,8 @@ const watchEvm = async (chain: "ethereum" | "polygon") => {
     }
   }
   for (const invoice of invoices.filter((item) => item.chain === chain && item.token_contract)) {
-    const onChain = await firstRpc(rpcs, (rpc) => balanceOf(rpc, invoice.token_contract as string, invoice.address));
-    const logged = creditsFor(invoice.id)
-      .filter((credit) => credit.chain === chain && credit.settled === 1 && credit.wrong_asset === 0 && credit.disappeared_at == null)
-      .reduce((sum, credit) => sum + BigInt(credit.base_units), 0n);
-    if (onChain !== logged) continue;
-    let secondReadAgrees = head.sources > 1;
-    if (!secondReadAgrees) {
-      const again = await balanceOf(rpcs[0] as JsonRpc, invoice.token_contract as string, invoice.address);
-      secondReadAgrees = again === onChain;
-    } else if (rpcs.length > 1) {
-      try {
-        const otherBalance = await balanceOf(rpcs[1] as JsonRpc, invoice.token_contract as string, invoice.address);
-        secondReadAgrees = otherBalance === onChain;
-      } catch {
-        const again = await balanceOf(rpcs[0] as JsonRpc, invoice.token_contract as string, invoice.address);
-        secondReadAgrees = again === onChain;
-      }
-    }
+    // Receipts/finality establish each credit independently of accumulated wallet balances.
+    const secondReadAgrees = creditsFor(invoice.id).some((credit) => credit.settled === 1 && credit.disappeared_at == null);
     const fee = chain === "ethereum" && invoice.asset === "usdt" ? await usdtFee(rpcs[0] as JsonRpc, invoice.token_contract as string) : undefined;
     grantInFlight = true;
     try {

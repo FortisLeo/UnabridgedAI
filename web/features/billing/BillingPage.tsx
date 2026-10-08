@@ -13,6 +13,7 @@ type Invoice = {
   status: string;
   createdAt: number;
   quota: Quota | null;
+  proExpiresAt?: number | null;
 };
 
 type PaymentRecord = {
@@ -47,11 +48,13 @@ export function BillingPage({ onQuota }: { onQuota?: (quota: Quota) => void }) {
   const [qr, setQr] = useState("");
   const [paying, setPaying] = useState(false);
   const [error, setError] = useState("");
+  const [proExpiresAt, setProExpiresAt] = useState<number | null>(null);
 
   useEffect(() => {
-    api<{ quota: Quota; invoice: Invoice | null; payments?: PaymentRecord[] }>("/api/billing")
+    api<{ quota: Quota; proExpiresAt?: number | null; invoice: Invoice | null; payments?: PaymentRecord[] }>("/api/billing")
       .then((data) => {
         setQuota(data.quota);
+        setProExpiresAt(data.proExpiresAt ?? data.quota.proExpiresAt ?? null);
         if (data.invoice) setInvoice(data.invoice);
         setPayments(data.payments ?? []);
         if (data.quota) onQuota?.(data.quota);
@@ -67,6 +70,7 @@ export function BillingPage({ onQuota }: { onQuota?: (quota: Quota) => void }) {
           setInvoice(current);
           if (current.quota) {
             setQuota(current.quota);
+            setProExpiresAt(current.proExpiresAt ?? current.quota.proExpiresAt ?? null);
             onQuota?.(current.quota);
           }
           setPayments((records) => {
@@ -128,7 +132,7 @@ export function BillingPage({ onQuota }: { onQuota?: (quota: Quota) => void }) {
       .finally(() => setPaying(false));
   };
 
-  const pro = quota?.plan === "pro";
+  const pro = quota?.plan === "pro" && Boolean(proExpiresAt && proExpiresAt > Date.now());
   const activeUnpaid = invoice && !pro && !paymentReceived(invoice.status) ? invoice.id : null;
   const assetLabel = invoice ? labelFor(invoice.chain, invoice.asset) : "";
   const pastPayments = payments.filter((payment) => payment.id !== activeUnpaid);
@@ -138,7 +142,7 @@ export function BillingPage({ onQuota }: { onQuota?: (quota: Quota) => void }) {
       <div className="plan-card">
         <div className="plan-top"><span className="tag">UNABRIDGEDAI / PROTOCOL</span><span className="price">{pro ? "pro" : "free"}</span></div>
         <h2>{pro ? "Pro is active." : "Free channel."}</h2>
-        <p>Free accounts get 3 messages. Pro removes the cap. Choose a network and send the exact amount to the fresh address.</p>
+        <p>Free accounts get 3 messages. Pro access lasts 28 days from each successful payment.</p>
         <div className="features">
           <span>✓ 3 free requests</span>
           <span>✓ unlimited after Pro</span>
@@ -148,6 +152,7 @@ export function BillingPage({ onQuota }: { onQuota?: (quota: Quota) => void }) {
         <div className="payment">
           <span>status</span>
           <code>{pro ? "pro" : quota ? `${quota.remaining ?? 0} free left` : "loading"}</code>
+          {pro && proExpiresAt && <small>valid until {new Date(proExpiresAt).toLocaleString()}</small>}
         </div>
         {!pro && !invoice && <button className="upgrade" onClick={() => setChoosing(true)}>pay with crypto</button>}
         {choosing && !invoice && (
@@ -194,6 +199,7 @@ export function BillingPage({ onQuota }: { onQuota?: (quota: Quota) => void }) {
         <h3>quota</h3>
         <p>Usage is tracked per account. New signups from the same network will not reset the free limit.</p>
         <div className="ledger-line"><span>plan</span><strong>{quota?.plan ?? "…"}</strong></div>
+        <div className="ledger-line"><span>valid until</span><strong>{proExpiresAt ? new Date(proExpiresAt).toLocaleDateString() : "not active"}</strong></div>
         <div className="ledger-line"><span>used</span><strong>{quota?.requestsUsed ?? "…"}</strong></div>
         <div className="ledger-line"><span>remaining</span><strong className="amber">{pro ? "unlimited" : quota?.remaining ?? "…"}</strong></div>
       </div>

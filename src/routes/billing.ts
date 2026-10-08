@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getUserUsage, quotaFor } from "../repositories/usage.ts";
 import { userIdOf } from "../types.ts";
 import { auth } from "../middleware/auth.ts";
+import { adminAuth } from "./admin.ts";
 import { invoiceCreateGuard } from "../middleware/security.ts";
 import { resolvePair } from "../payments/allowlist.ts";
 import { createInvoice, InvoiceError, paymentHistory, readInvoice, resumeInvoice, submitRefundAddress } from "../payments/invoices.ts";
@@ -17,7 +18,7 @@ billingRouter.get("/", auth, (req, res) => {
   const user = getUserUsage(userIdOf(req));
   if (!user) return res.status(401).json({ error: "Sign in required" });
   const userId = userIdOf(req);
-  res.json({ quota: quotaFor(user), invoice: resumeInvoice(userId), payments: paymentHistory(userId) });
+  res.json({ quota: quotaFor(user), proExpiresAt: quotaFor(user).proExpiresAt, invoice: resumeInvoice(userId), payments: paymentHistory(userId) });
 });
 
 billingRouter.post("/invoices", auth, invoiceCreateGuard, async (req, res) => {
@@ -55,7 +56,7 @@ billingRouter.post("/webhooks/payment", (req, res) => {
   return res.json(hint);
 });
 
-billingRouter.post("/transfers/:chain/gas", auth, async (req, res) => {
+billingRouter.post("/transfers/:chain/gas", adminAuth, async (req, res) => {
   const chain = req.params.chain;
   if (chain !== "polygon" && chain !== "ethereum") return res.status(400).json({ error: "That chain is not supported." });
   try {
@@ -66,7 +67,7 @@ billingRouter.post("/transfers/:chain/gas", auth, async (req, res) => {
   }
 });
 
-billingRouter.post("/transfers/:id/broadcast", auth, async (req, res) => {
+billingRouter.post("/transfers/:id/broadcast", adminAuth, async (req, res) => {
   try {
     return res.json(await broadcastTransfer(String(req.params.id)));
   } catch (error) {
@@ -75,7 +76,7 @@ billingRouter.post("/transfers/:id/broadcast", auth, async (req, res) => {
   }
 });
 
-billingRouter.post("/transfers/:id/confirm", auth, async (req, res) => {
+billingRouter.post("/transfers/:id/confirm", adminAuth, async (req, res) => {
   try {
     return res.json(await confirmTransfer(String(req.params.id)));
   } catch (error) {

@@ -77,7 +77,7 @@ const serve = (fail: boolean) => async (req: IncomingMessage, res: ServerRespons
   }
   if (fail && (body.method === "eth_getTransactionReceipt" || body.method === "eth_call")) return reject();
   if (body.method === "eth_getTransactionReceipt") return send({ status: "0x1", blockHash, logs: [] });
-  if (body.method === "eth_call") return send(hex(amount));
+  if (body.method === "eth_call") return send(hex(amount * 200n));
   res.writeHead(400).end();
 };
 
