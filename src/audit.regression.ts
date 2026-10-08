@@ -409,6 +409,23 @@ test("case-variant usernames are one account and sign-in trims", async () => {
   assert.equal(body.user.username, "CaseUser");
 });
 
+test("an expired Pro plan reports as free through the public endpoints", async () => {
+  const user = await signup();
+  const id = (db.prepare("SELECT id FROM users WHERE username = ?").get(user.username) as { id: string }).id;
+  db.prepare("UPDATE users SET plan = 'pro', pro_expires_at = ? WHERE id = ?").run(Date.now() - 1000, id);
+  const me = await (await authed(user.cookie, "/api/me")).json();
+  assert.equal(me.user.plan, "free");
+  assert.equal(me.quota.plan, "free");
+  const signin = await fetch(`${base}/api/auth/signin`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username: user.username, password: user.password }),
+  });
+  assert.equal(signin.status, 200);
+  const body = await signin.json();
+  assert.equal(body.user.plan, "free");
+});
+
 test("renaming a chat does not un-archive it", async () => {
   const user = await signup();
   const id = crypto.randomUUID();

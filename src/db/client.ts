@@ -85,6 +85,24 @@ if (!invoiceColumns.some((column) => column.name === "sweep_tx")) db.exec("ALTER
 db.prepare(
   "DELETE FROM ip_events WHERE ip IN ('127.0.0.1', '::1', 'localhost', 'unknown') OR ip LIKE '127.%' OR ip LIKE '192.168.%' OR ip LIKE '10.%'",
 ).run();
+// Legacy EVM addresses predate the lease table. Give each one the lease its latest invoice implies so
+// funded historical addresses cannot be reused and are still eligible for sweeping.
+export const backfillLegacyLeases = () => db.exec(`
+  INSERT OR IGNORE INTO payment_address_leases (address, chain, invoice_id, state, leased_at, expires_at, quarantine_until)
+  SELECT a.address, i.chain, i.id,
+    CASE WHEN i.status = 'succeeded' THEN 'available' ELSE 'quarantined' END,
+    i.created_at,
+    i.qr_expires_at,
+    CASE WHEN i.status = 'succeeded' THEN NULL ELSE i.qr_expires_at + 1200000 END
+  FROM payment_addresses a
+  JOIN payment_invoices i ON lower(i.address) = lower(a.address)
+  WHERE a.family = 'evm'
+    AND NOT EXISTS (SELECT 1 FROM payment_address_leases l WHERE l.address = a.address AND l.chain = i.chain)
+    AND i.id = (SELECT i2.id FROM payment_invoices i2 WHERE lower(i2.address) = lower(a.address) AND i2.chain = i.chain ORDER BY i2.created_at DESC LIMIT 1)
+`);
+backfillLegacyLeases();
+db.exec(`UPDATE payment_address_leases SET state = 'available', quarantine_until = NULL
+  WHERE state = 'paid_pending_sweep' AND invoice_id IN (SELECT id FROM payment_invoices WHERE status = 'succeeded');`);
 
 export const closeDb = () => {
   try {

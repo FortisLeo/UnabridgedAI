@@ -61,6 +61,10 @@ Pro can be bought with USDT or USDC on Ethereum, Polygon, and Solana, or with Mo
 Each invoice gets a fresh address. The browser polls `GET /api/billing/invoices/:id`. There is no payment webhook. Pro is set once settled eligible funds reach or exceed the expected base-unit amount: the chain `finalized` tag for stablecoins, and 10 confirmations with no future unlock time for Monero. Set the operator price with `tsx scripts/payment-price.ts pro_price_cents 1500`. Leave the price unset and invoice creation returns 503.
 
 
+EVM payment attribution uses individual finalized transfer events, keyed by chain, transaction hash, and log index. Successful settlement releases the address lease immediately, even while funds accumulate. Unpaid and partial invoices become reusable after their payment deadline plus a 20-minute quarantine. Transfers outside an invoice's block-time window are retained for reconciliation; the sender's intended invoice cannot be inferred from a reused address alone.
+
+EVM sweeps consolidate each address/token balance independently of invoices. Run the operator sweep CLI periodically; broadcasts remain pending until a later reconciliation observes a finalized receipt. Confirming a sweep never modifies a newer invoice lease. Historical invoice-owned sweep records remain in SQLite for reference; new sweep jobs use `payment_address_sweeps`.
+
 ## OpenAI-compatible API
 
 Create named keys in the app under **Get API**. Then point any OpenAI client at this origin:

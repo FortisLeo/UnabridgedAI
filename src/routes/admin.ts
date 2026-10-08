@@ -7,8 +7,8 @@ import { balanceOf, createJsonRpc } from "../payments/chain.ts";
 import { resolvePair } from "../payments/allowlist.ts";
 import { db } from "../db/client.ts";
 import { adminOverviewRows, approveWithdrawal, createAdminSession, createWithdrawalRequest, deleteAdminSession, findAdminSession, listAuditEvents, listPaymentPrices, listWithdrawalRequests, setPaymentPrice } from "../repositories/admin.ts";
-import { count } from "../repositories/admin-reports.ts";
-import { balancesSummary, paymentSearch, revenueRows, sweepRows, unmatchedRows, webhookRows } from "../repositories/admin-reports.ts";
+import { balancesSummary, count, paymentSearch, revenueRows, sweepRows, unmatchedRows, webhookRows } from "../repositories/admin-reports.ts";
+import { adminSigninGuard, recordFailedAdminSignin } from "../middleware/security.ts";
 
 const adminUser = process.env.ADMIN_USERNAME?.trim() ?? "";
 const adminPasswordHash = process.env.ADMIN_PASSWORD_HASH?.trim() ?? "";
@@ -22,11 +22,14 @@ const constantTime = (left: string, right: string) => {
 
 export const adminRouter = Router();
 
-adminRouter.post("/login", (req, res) => {
+adminRouter.post("/login", adminSigninGuard, (req, res) => {
   const username = typeof req.body?.username === "string" ? req.body.username.trim() : "";
   const password = typeof req.body?.password === "string" ? req.body.password : "";
   const valid = Boolean(adminUser && adminPasswordHash && username === adminUser && passwordOk(password, adminPasswordHash));
-  if (!valid) return res.status(401).json({ error: "Invalid admin credentials" });
+  if (!valid) {
+    recordFailedAdminSignin(req);
+    return res.status(401).json({ error: "Invalid admin credentials" });
+  }
   const token = randomToken();
   const expiresAt = Date.now() + 1000 * 60 * 60 * 8;
   createAdminSession(hash(token), expiresAt, adminUser);
@@ -51,7 +54,6 @@ export const adminAuth = (req: import("express").Request, res: import("express")
 };
 
 adminRouter.get("/overview", adminAuth, (_req, res) => {
-  const count = (sql: string) => (db.prepare(sql).get() as { count: number }).count;
   const { statuses, addressStates, credits, recentEvents } = adminOverviewRows();
   res.json({
     users: count("SELECT COUNT(*) AS count FROM users"),
@@ -106,7 +108,7 @@ adminRouter.get("/balances", adminAuth, async (_req, res) => {
         if (rpcUrl) {
           try {
             const value = await createJsonRpc(rpcUrl)("eth_getBalance", [row.address, "latest"]);
-            native = (BigInt(String(value)) / 1_000_000_000_000_000n).toString();
+            native = BigInt(String(value)).toString();
           } catch { /* show unavailable for this address */ }
         }
         const assets = await Promise.all(pairs.filter(([assetChain]) => assetChain === chain).map(async ([, asset]) => {
@@ -120,7 +122,7 @@ adminRouter.get("/balances", adminAuth, async (_req, res) => {
     });
     const settled = await Promise.allSettled(jobs);
     const balances = settled.flatMap((result) => result.status === "fulfilled" ? [result.value] : []);
-    res.json({ addresses: db.prepare("SELECT family, state, COUNT(*) AS count FROM payment_addresses GROUP BY family, state").all(), pool: balances, credits: db.prepare("SELECT chain, COUNT(*) AS count, COALESCE(SUM(CAST(base_units AS INTEGER)), 0) AS baseUnits FROM payment_credits WHERE disappeared_at IS NULL GROUP BY chain").all(), health: db.prepare("SELECT * FROM chain_health ORDER BY chain").all() });
+    res.json({ ...balancesSummary(), pool: balances });
   } catch (error) {
     console.error("admin balances failed", error);
     res.status(200).json({ addresses: [], pool: [], credits: [], health: [], error: "Address balance data is temporarily unavailable." });
@@ -136,10 +138,8 @@ adminRouter.post("/withdrawals", adminAuth, (req, res) => {
   res.status(201).json({ id, status: "requested" });
 });
 adminRouter.post("/withdrawals/:id/approve", adminAuth, (req, res) => {
-  const id = typeof req.params.id === "string" ? req.params.id : ""; const now = Date.now();
-  const result = db.prepare("UPDATE admin_withdrawals SET status = 'approved', approved_by = ?, updated_at = ? WHERE id = ? AND status = 'requested'").run(adminUser || "token", now, id);
-  if (!result.changes) return res.status(409).json({ error: "Withdrawal is not awaiting approval" });
-  db.prepare("INSERT INTO admin_audit_events (action, actor, target, detail, created_at) VALUES (?, ?, ?, ?, ?)").run("withdrawal.approved", adminUser || "token", id, "Approved; signer execution remains disabled", now);
+  const id = typeof req.params.id === "string" ? req.params.id : "";
+  if (!approveWithdrawal(id, adminUser || "token")) return res.status(409).json({ error: "Withdrawal is not awaiting approval" });
   res.json({ id, status: "approved" });
 });
 adminRouter.get("/analytics", adminAuth, (_req, res) => res.json(revenueRows()));

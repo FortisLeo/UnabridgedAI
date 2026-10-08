@@ -1,4 +1,5 @@
 import { db } from "../db/client.ts";
+import { ensureAddressSweepTable } from "../payments/address-sweeps.ts";
 
 export const count = (sql: string) => (db.prepare(sql).get() as { count: number }).count;
 
@@ -16,7 +17,10 @@ export const balancesSummary = () => ({
   health: db.prepare("SELECT * FROM chain_health ORDER BY chain").all(),
 });
 
-export const sweepRows = () => db.prepare("SELECT id, invoice_id, chain, asset, base_units, from_address, to_address, broadcast_tx, broadcast_at, created_at FROM payment_sweeps ORDER BY created_at DESC LIMIT 200").all();
+export const sweepRows = () => {
+  ensureAddressSweepTable();
+  return db.prepare("SELECT id, chain, asset, base_units, from_address, to_address, broadcast_tx, broadcast_at, created_at, confirmed_at FROM payment_address_sweeps ORDER BY created_at DESC LIMIT 200").all();
+};
 export const revenueRows = () => ({
   byChain: db.prepare("SELECT chain, COUNT(*) AS invoices, SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS paid FROM payment_invoices GROUP BY chain").all(),
   byAsset: db.prepare("SELECT asset, COUNT(*) AS invoices, SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS paid FROM payment_invoices GROUP BY asset").all(),

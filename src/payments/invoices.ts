@@ -57,7 +57,7 @@ export const createInvoice = async (userId: string, pair: AllowlistEntry, now = 
     db.transaction(() => {
       if (family === "evm") {
         ensureEvmAddress(allocated.address, reserved, now);
-        leaseEvmAddress(allocated.address, pair.chain, id, now);
+        leaseEvmAddress(allocated.address, pair.chain, id, now, now + QR_TTL_MS);
       } else {
         insertAddress(allocated.address, family, reserved, allocated.ata, now);
       }

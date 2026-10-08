@@ -75,7 +75,7 @@ export const applySettlement = (invoice: InvoiceRow, credits: CreditRow[], now: 
       JSON.stringify({ status, reason }),
     );
     if (invoice.chain === "ethereum" || invoice.chain === "polygon") {
-      if (status === "succeeded" || status === "expired_unpaid") releaseEvmLease(invoice.id, status === "succeeded", now);
+      if (status === "succeeded" || status === "expired_unpaid") releaseEvmLease(invoice.id, status === "succeeded");
     }
     if (status !== invoice.status) enqueuePaymentWebhook(invoice.id, "payment.status", now);
     return { status, alreadyPro, grantAppliedAt };
